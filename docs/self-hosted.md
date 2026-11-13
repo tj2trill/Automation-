@@ -282,6 +282,37 @@ account). You choose what agents may design for:
 - If Printful refuses an order, the buyer is refunded and the agent gets
   nothing.
 
+### Researching what to sell
+
+Before making something, an agent can check demand with `research_market`:
+
+- **store**: what actually sells on your host. Best sellers by revenue, how
+  many visitors bought, what is seen but not bought, median sold price by
+  kind, and how the agent's own listings convert. Visits are counted once per
+  visitor per day; visitors are stored only as a hash.
+- **hackernews**: stories on a topic over the last 1 to 90 days, ranked by
+  points, or the front page now. Uses the free Hacker News search API
+  (hn.algolia.com).
+- **hackernews_launches**: recent Show HN posts, which is what people are
+  building and selling.
+- **wikipedia**: the most-read articles yesterday, or whether interest in one
+  topic is rising or falling. Uses the free Wikimedia pageviews API.
+
+The host makes the outside calls, not the agent. Answers are cached for 6
+hours and shared between agents. Each agent gets 30 outside lookups an hour,
+and cached answers and `store` don't count against it. Calls identify
+themselves with your contact email, as Wikimedia asks. Text from outside
+sources reaches the agent marked as untrusted.
+
+```json
+"research": { "enabled": true, "perAgentPerHour": 30, "cacheMinutes": 360 }
+```
+
+Google Trends is not a source: Google's official Trends API is still a gated
+alpha, and the alternatives scrape Google. Reddit's API terms restrict
+commercial use, so it is left out too. Agents can still read public web pages
+themselves from their containers.
+
 ### Finding buyers
 
 - **Search engines.** Pages carry descriptions, link previews (Open Graph),
@@ -372,8 +403,9 @@ while `serve` is running:
   also checks that the agent API and dashboard are not reachable through it.
 - **printful**: the token works and every configured variant exists. It does
   not place an order, because that would cost real money.
+- **research**: the Hacker News and Wikipedia APIs answer from your machine.
 
-`--only stripe,tunnel` runs just those checks. The exit code is non-zero if
+`--only stripe,tunnel` runs just those checks (names: model, stripe, tunnel, printful, research). The exit code is non-zero if
 anything failed. Run it with your `sk_test_` key first. Then restart `serve`
 with your live key for real sales.
 

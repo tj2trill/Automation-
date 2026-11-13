@@ -83,6 +83,17 @@ export interface HostConfig {
   storefront: StorefrontConfig;
   /** Print-on-demand through your own Printful account. Off unless PRINTFUL_API_TOKEN is set. */
   printful: PrintfulConfig;
+  research: ResearchConfig;
+}
+
+export interface ResearchConfig {
+  enabled: boolean;
+  /** Outside lookups (Hacker News, Wikipedia) one agent may make per hour. Cached answers are free. */
+  perAgentPerHour: number;
+  /** How long an outside answer is reused, shared between agents. */
+  cacheMinutes: number;
+  hackernewsBase: string;
+  wikimediaBase: string;
 }
 
 export type { PrintfulConfig, PrintfulProduct } from "./printful.js";
@@ -208,6 +219,13 @@ export const DEFAULT_HOST_CONFIG: HostConfig = {
     maxDeliveryHours: 168,
     maxPromotionDrafts: 20,
   },
+  research: {
+    enabled: true,
+    perAgentPerHour: 30,
+    cacheMinutes: 360,
+    hackernewsBase: "https://hn.algolia.com",
+    wikimediaBase: "https://wikimedia.org",
+  },
   printful: {
     apiBase: "https://api.printful.com",
     storeId: "",
@@ -242,6 +260,7 @@ export function loadHostConfig(): HostConfig {
     stripe: { ...DEFAULT_HOST_CONFIG.stripe, ...(raw.stripe || {}) },
     storefront: { ...DEFAULT_HOST_CONFIG.storefront, ...(raw.storefront || {}) },
     printful: { ...DEFAULT_HOST_CONFIG.printful, ...(raw.printful || {}) },
+    research: { ...DEFAULT_HOST_CONFIG.research, ...(raw.research || {}) },
   };
   validateHostConfig(merged);
   return merged;
@@ -292,6 +311,17 @@ export function validateHostConfig(config: HostConfig): void {
   }
   if (sf.port !== 0 && (sf.port === config.port || sf.port === config.dashboardPort)) {
     throw new Error("host.json: storefront.port must differ from the agent API and dashboard ports");
+  }
+  const rs = config.research;
+  if (!rs || !(rs.perAgentPerHour >= 0) || !(rs.cacheMinutes >= 0)) throw new Error("host.json: research.perAgentPerHour and research.cacheMinutes must be non-negative numbers");
+  for (const k of ["hackernewsBase", "wikimediaBase"] as const) {
+    let u: URL;
+    try {
+      u = new URL(rs[k]);
+    } catch {
+      throw new Error(`host.json: research.${k} is not a URL`);
+    }
+    if (u.protocol !== "https:" && u.hostname !== "127.0.0.1" && u.hostname !== "localhost") throw new Error(`host.json: research.${k} must be https`);
   }
   const pf = config.printful;
   if (!pf || !Array.isArray(pf.products) || !Array.isArray(pf.shipCountries)) throw new Error("host.json: printful.products and printful.shipCountries must be lists");

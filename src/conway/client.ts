@@ -504,6 +504,14 @@ export function createConwayClient(options: ConwayClientOptions): ConwayClient {
   const draftPromotion = async (input: { platform: string; text: string; listingId?: string }): Promise<PromotionDraft> =>
     toPromotion(await request("POST", "/v1/promotions", { platform: input.platform, text: input.text, listing_id: input.listingId }, once));
 
+  const researchMarket = async (input: { source: string; query?: string; days?: number }) => {
+    const q = new URLSearchParams({ source: input.source });
+    if (input.query) q.set("q", input.query);
+    if (input.days !== undefined) q.set("days", String(input.days));
+    const r = await request("GET", `/v1/research?${q}`, undefined, { ...once, timeout: 30_000 });
+    return { lines: Array.isArray(r.lines) ? r.lines.map(String) : [], cached: r.cached === true, lookupsLeft: Number(r.lookups_left_this_hour) || 0 };
+  };
+
   const listPromotions = async (): Promise<PromotionDraft[]> => {
     const r = await request("GET", "/v1/promotions", undefined, once);
     return (Array.isArray(r.promotions) ? r.promotions : []).map(toPromotion);
@@ -800,7 +808,7 @@ export function createConwayClient(options: ConwayClientOptions): ConwayClient {
     listSandboxes,
     getCreditsBalance,
     getCreditsReceived,
-    ...(isSelfHosted(apiUrl) ? { getCreditsSpent, listJobs, submitJob, createPaymentLink, listPaymentLinks, getSelection, getStore, setStoreTagline, createListing, updateListing, publishDrop, listStoreOrders, deliverOrder, draftPromotion, listPromotions } : {}),
+    ...(isSelfHosted(apiUrl) ? { getCreditsSpent, listJobs, submitJob, createPaymentLink, listPaymentLinks, getSelection, getStore, setStoreTagline, createListing, updateListing, publishDrop, listStoreOrders, deliverOrder, draftPromotion, listPromotions, researchMarket } : {}),
     getCreditsPricing,
     transferCredits,
     registerAutomaton,

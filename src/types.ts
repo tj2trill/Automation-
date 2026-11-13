@@ -526,6 +526,7 @@ export interface ConwayClient {
   deliverOrder?(orderId: string, input: { filename: string; contentBase64: string; note?: string }): Promise<{ id: string; status: string; creditedCents: number }>;
   draftPromotion?(input: { platform: string; text: string; listingId?: string }): Promise<PromotionDraft>;
   listPromotions?(): Promise<PromotionDraft[]>;
+  researchMarket?(input: { source: string; query?: string; days?: number }): Promise<{ lines: string[]; cached: boolean; lookupsLeft: number }>;
   getCreditsPricing(): Promise<PricingTier[]>;
   transferCredits(
     toAddress: string,

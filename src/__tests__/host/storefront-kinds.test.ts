@@ -562,6 +562,8 @@ describe("selftest", () => {
         if (u.pathname === "/v1/refunds") return json({ id: "re_1", status: "succeeded" });
       }
       if (u.hostname === "api.printful.example") return pf.fetchImpl(url, init);
+      if (u.hostname === "hn.algolia.com") return json({ hits: [{ title: "a" }, { title: "b" }] });
+      if (u.hostname === "wikimedia.org") return json({ items: [{ articles: [{ article: "X", views: 5 }] }] });
       return json({ error: { message: "unexpected " + url } }, 500);
     };
     const chat = async (model: any) => ({ id: "x", model: model.id, message: { role: "assistant" as const, content: "ready" }, usage: { promptTokens: 12, completionTokens: 1, totalTokens: 13 }, finishReason: "stop" });
@@ -578,6 +580,8 @@ describe("selftest", () => {
     expect(text).toContain("PASS  tunnel   public address reaches this storefront");
     expect(text).toContain("PASS  tunnel   agent API and dashboard stay private");
     expect(text).toContain("PASS  printful poster Glossy: Poster 1002");
+    expect(text).toContain("PASS  research Hacker News: 2 front-page stories");
+    expect(text).toContain("PASS  research Wikipedia pageviews: 1 top articles");
     expect(text).toContain("All checks passed.");
     expect([...w.sessions.values()].map((s) => s.params.mode)).toEqual(["payment", "subscription", "payment"]);
     expect(fs.existsSync(path.join(hostDir, "selftest-nonce"))).toBe(false);

@@ -26,8 +26,8 @@ import { costMicro, type UpstreamChat } from "./inference-proxy.js";
 import { PrintfulClient } from "./printful.js";
 import { formatUsd } from "./store.js";
 
-export type CheckName = "model" | "stripe" | "tunnel" | "printful";
-export const ALL_CHECKS: CheckName[] = ["model", "stripe", "tunnel", "printful"];
+export type CheckName = "model" | "stripe" | "tunnel" | "printful" | "research";
+export const ALL_CHECKS: CheckName[] = ["model", "stripe", "tunnel", "printful", "research"];
 
 export interface CheckResult {
   check: CheckName;
@@ -230,6 +230,31 @@ export async function runSelftest(opts: SelftestOptions): Promise<CheckResult[]>
         if (!opts.config.printful.autoConfirm) skip("printful", "orders", "autoConfirm is off: orders wait in Printful as drafts until you confirm them");
       } catch (err) {
         add({ check: "printful", name: "token", ok: false, detail: errText(err) });
+      }
+    }
+  }
+
+  // ─── Research sources ────────────────────────────────────────
+  if (want.has("research")) {
+    const rs = opts.config.research;
+    if (!rs.enabled) skip("research", "market research", "research.enabled is false");
+    else {
+      const ua = { "User-Agent": "automaton-host/1.0 (selftest)", Accept: "application/json" };
+      try {
+        const r = await doFetch(`${rs.hackernewsBase.replace(/\/$/, "")}/api/v1/search?tags=front_page&hitsPerPage=3`, { method: "GET", headers: ua });
+        const body = await r.json();
+        add({ check: "research", name: "Hacker News", ok: r.ok && Array.isArray(body?.hits), detail: r.ok ? `${body?.hits?.length ?? 0} front-page stories` : `HTTP ${r.status}` });
+      } catch (err) {
+        add({ check: "research", name: "Hacker News", ok: false, detail: errText(err) });
+      }
+      try {
+        const d = new Date(Date.now() - 2 * 86_400_000);
+        const r = await doFetch(`${rs.wikimediaBase.replace(/\/$/, "")}/api/rest_v1/metrics/pageviews/top/en.wikipedia/all-access/${d.getUTCFullYear()}/${String(d.getUTCMonth() + 1).padStart(2, "0")}/${String(d.getUTCDate()).padStart(2, "0")}`, { method: "GET", headers: ua });
+        const body = await r.json();
+        const n = body?.items?.[0]?.articles?.length ?? 0;
+        add({ check: "research", name: "Wikipedia pageviews", ok: r.ok && n > 0, detail: r.ok ? `${n} top articles` : `HTTP ${r.status}` });
+      } catch (err) {
+        add({ check: "research", name: "Wikipedia pageviews", ok: false, detail: errText(err) });
       }
     }
   }

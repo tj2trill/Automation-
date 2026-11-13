@@ -13,6 +13,7 @@ import { startHostServer, type RunningHost } from "../../host/server.js";
 import { HostStore } from "../../host/store.js";
 import { Economy, type EconomyOptions, type FetchLike } from "../../host/economy.js";
 import { Storefront, startStorefrontServer } from "../../host/storefront.js";
+import { MarketResearch } from "../../host/research.js";
 import fs from "fs";
 import os from "os";
 import path from "path";
@@ -173,6 +174,7 @@ export interface TestHost {
   upstream: ReturnType<typeof scriptedUpstream>;
   economy: Economy;
   storefront: Storefront;
+  research: MarketResearch;
   /** The public store, on loopback. */
   shopUrl: string;
   filesDir: string;
@@ -184,7 +186,7 @@ export interface TestHost {
 export async function startTestHost(
   overrides: Partial<HostConfig> = {},
   economyOptions: EconomyOptions = {},
-  storefrontOptions: { printfulToken?: string; printfulFetch?: FetchLike } = {},
+  storefrontOptions: { printfulToken?: string; printfulFetch?: FetchLike; researchFetch?: FetchLike } = {},
 ): Promise<TestHost> {
   const config = testConfig(overrides);
   const store = new HostStore(":memory:");
@@ -193,11 +195,13 @@ export async function startTestHost(
   const logs: string[] = [];
   const economy = new Economy(config, store, driver, { log: (m) => logs.push(m), ...economyOptions });
   const filesDir = fs.mkdtempSync(path.join(os.tmpdir(), "store-files-"));
-  const storefront = new Storefront(config, store, economy, { filesDir, log: (m) => logs.push(m), ...storefrontOptions });
+  const { researchFetch, ...sfOpts } = storefrontOptions;
+  const storefront = new Storefront(config, store, economy, { filesDir, log: (m) => logs.push(m), ...sfOpts });
+  const research = new MarketResearch(config, store, storefront, { fetchImpl: researchFetch, log: (m) => logs.push(m) });
   economy.deathHooks.push((a) => storefront.removeStoreOf(a));
   const shop = await startStorefrontServer({ storefront, log: (m) => logs.push(m) });
   const running = await startHostServer(
-    { config, store, driver, upstream: upstream.chat, containerHostUrl: "http://automaton-host:4820", log: (m) => logs.push(m), economy, storefront },
+    { config, store, driver, upstream: upstream.chat, containerHostUrl: "http://automaton-host:4820", log: (m) => logs.push(m), economy, storefront, research },
     ["127.0.0.1"],
     { billingIntervalMs: 3_600_000 },
   );
@@ -210,6 +214,7 @@ export async function startTestHost(
     upstream,
     economy,
     storefront,
+    research,
     shopUrl: `http://127.0.0.1:${shop.port}`,
     filesDir,
     running,

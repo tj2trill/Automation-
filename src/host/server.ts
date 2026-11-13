@@ -26,6 +26,7 @@ import {
 } from "./inference-proxy.js";
 import { Economy, EconomyError } from "./economy.js";
 import { StoreError, type Storefront } from "./storefront.js";
+import { ResearchError, type MarketResearch } from "./research.js";
 import {
   AccountDeadError,
   AccountFrozenError,
@@ -68,6 +69,7 @@ export interface HostServerDeps {
   economy?: Economy;
   /** Agents' public stores. */
   storefront?: Storefront;
+  research?: MarketResearch;
 }
 
 interface Ctx {
@@ -832,6 +834,14 @@ function promotionJson(p: ReturnType<Storefront["listPromotions"]>[number]) {
   return { id: p.id, platform: p.platform, text: p.text, status: p.status, link: p.link, listing_id: p.listingId, views: p.views, sales: p.sales, created_at: p.createdAt };
 }
 
+route("GET", /^\/v1\/research$/, async (ctx) => {
+  const address = requireAccount(ctx);
+  if (!ctx.deps.research) throw new HttpError(501, "Market research is not enabled on this host", "not_supported");
+  const q = ctx.url.searchParams;
+  const r = await ctx.deps.research.query(address, { source: q.get("source"), query: q.get("q") ?? undefined, days: q.get("days") ?? undefined });
+  return { body: { source: r.source, query: r.query, days: r.days, lines: r.lines, cached: r.cached, fetched_at: r.fetchedAt, lookups_left_this_hour: ctx.deps.research.remaining(address) } };
+});
+
 route("POST", /^\/v1\/promotions$/, async (ctx) => {
   const address = requireAccount(ctx);
   const b = ctx.body || {};
@@ -897,7 +907,7 @@ export function createRequestHandler(deps: HostServerDeps): http.RequestListener
       const result = await match.r.handler({ req, url, body, deps }, match.m.slice(1));
       send(result.status ?? 200, result.body);
     } catch (err) {
-      if (err instanceof HttpError || err instanceof EconomyError || err instanceof StoreError) {
+      if (err instanceof HttpError || err instanceof EconomyError || err instanceof StoreError || err instanceof ResearchError) {
         send(err.status, { error: err.message, code: err.code });
         return;
       }

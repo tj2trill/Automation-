@@ -138,6 +138,12 @@ CREATE TABLE IF NOT EXISTS promotions (
   created_at  TEXT NOT NULL,
   updated_at  TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS listing_views (
+  listing_id  TEXT NOT NULL,
+  visitor     TEXT NOT NULL,
+  day         TEXT NOT NULL,
+  PRIMARY KEY (listing_id, visitor, day)
+);
 CREATE TABLE IF NOT EXISTS promo_hits (
   promotion_id TEXT NOT NULL,
   visitor      TEXT NOT NULL,
@@ -1240,6 +1246,11 @@ export class Storefront {
     return this.mapPromotion(this.getPromotionRow(id));
   }
 
+  /** One view per visitor per day per listing, for conversion rates. Visitors are stored only as a hash. */
+  recordListingView(listingId: string, visitor: string): void {
+    this.store.db.prepare("INSERT OR IGNORE INTO listing_views (listing_id, visitor, day) VALUES (?, ?, ?)").run(listingId, sha256(`${visitor}|${listingId}`).slice(0, 32), new Date().toISOString().slice(0, 10));
+  }
+
   /** One view per visitor per day per post. */
   recordVisit(via: string, visitor: string, address: string): void {
     if (!/^[0-9A-Z]{26}$/.test(via)) return;
@@ -1546,7 +1557,10 @@ export function createStorefrontHandler(deps: StorefrontServerDeps): http.Reques
         const l = sf.getListing(m[1]!);
         if (!l || !sf.isOnSale(l)) return fail(404, "This item is not for sale.");
         const s = sf.getStore(l.address)!;
-        if (via && visitLimiter.allow(visitorIp(req))) sf.recordVisit(via, visitorIp(req), l.address);
+        if (visitLimiter.allow(visitorIp(req))) {
+          sf.recordListingView(l.id, visitorIp(req));
+          if (via) sf.recordVisit(via, visitorIp(req), l.address);
+        }
         const okVia = via && /^[0-9A-Z]{26}$/.test(via) ? via : null;
         const p = page(l.title, storeHeader(s) + `<main>${itemHtml(l, true, okVia)}<p><a href="/s/${escapeHtml(s.slug)}">More from this store</a></p></main>`, {
           canonical: `/p/${l.id}`,

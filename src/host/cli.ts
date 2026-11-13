@@ -39,6 +39,7 @@ import { formatLearningEval, runLearningEval } from "./eval-learning.js";
 import { startHostServer } from "./server.js";
 import { Economy } from "./economy.js";
 import { Storefront, startStorefrontServer } from "./storefront.js";
+import { MarketResearch } from "./research.js";
 import { ALL_CHECKS, formatSelftest, runSelftest, type CheckName } from "./selftest.js";
 import { formatUsd, HostStore } from "./store.js";
 
@@ -149,7 +150,7 @@ async function cmdServe(): Promise<void> {
   }
 
   const running = await startHostServer(
-    { config, store, driver: admin.driver, upstream: createUpstreamChat(config, keys), containerHostUrl: containerHostUrl(config), log, economy: admin.economy, storefront: admin.storefront },
+    { config, store, driver: admin.driver, upstream: createUpstreamChat(config, keys), containerHostUrl: containerHostUrl(config), log, economy: admin.economy, storefront: admin.storefront, research: new MarketResearch(config, store, admin.storefront, { log }) },
     ["127.0.0.1", config.dockerGateway, ...config.extraBindAddresses],
   );
   log(`agent API listening on ${running.addresses.join(", ")}`);

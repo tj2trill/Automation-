@@ -76,6 +76,50 @@ const MAX_TOOL_CALLS_PER_TURN = 10;
 const MAX_CONSECUTIVE_ERRORS = 5;
 const MAX_REPETITIVE_TURNS = 3;
 
+/**
+ * How long to nap when a turn ends with nothing left to do. Every wake-up is
+ * a paid turn, and anything that matters (a message, a sale, an order, an
+ * email reply, a new job) wakes the agent through a wake event regardless.
+ * So the nap starts at 15 minutes and doubles with each idle wake-up in a
+ * row, up to 6 hours; doing real work resets it.
+ */
+export const IDLE_NAP_FIRST_MS = 15 * 60_000;
+export const IDLE_NAP_MAX_MS = 6 * 3_600_000;
+const IDLE_NAP_KEY = "idle_nap_streak";
+
+// Tools that change something. A turn using none of them did no real work.
+const MUTATING_TOOL_NAMES = new Set([
+  "exec", "write_file", "edit_own_file", "transfer_credits", "topup_credits", "fund_child",
+  "spawn_child", "start_child", "delete_sandbox", "create_sandbox",
+  "install_npm_package", "install_mcp_server", "install_skill",
+  "create_skill", "remove_skill", "install_skill_from_git",
+  "install_skill_from_url", "pull_upstream", "git_commit", "git_push",
+  "git_branch", "git_clone", "send_message", "message_child",
+  "register_domain", "register_erc8004", "give_feedback",
+  "update_genesis_prompt", "update_agent_card", "modify_heartbeat",
+  "expose_port", "remove_port", "x402_fetch", "manage_dns",
+  "distress_signal", "prune_dead_children", "sleep",
+  "update_soul", "remember_fact", "set_goal", "complete_goal",
+  "save_procedure", "note_about_agent", "forget",
+  "enter_low_compute", "switch_model", "review_upstream_changes",
+  "submit_job", "create_payment_link", "create_listing", "update_listing", "set_store_tagline",
+  "deliver_order", "publish_drop", "draft_promotion",
+  "send_email", "reply_email", "publish_site", "offer_site_hosting",
+]);
+
+export function nextIdleNapMs(db: Pick<AutomatonDatabase, "getKV" | "setKV">): number {
+  const streak = Math.max(0, Number(db.getKV(IDLE_NAP_KEY)) || 0);
+  db.setKV(IDLE_NAP_KEY, String(streak + 1));
+  return Math.min(IDLE_NAP_FIRST_MS * 2 ** Math.min(streak, 20), IDLE_NAP_MAX_MS);
+}
+
+// Bookkeeping an agent can do on every wake-up without producing anything.
+// It still counts as activity within a turn, but does not reset the idle nap.
+const BOOKKEEPING_TOOL_NAMES = new Set([
+  "sleep", "remember_fact", "set_goal", "complete_goal", "save_procedure", "note_about_agent", "forget",
+  "update_soul", "enter_low_compute", "switch_model", "modify_heartbeat", "distress_signal",
+]);
+
 export interface AgentLoopOptions {
   identity: AutomatonIdentity;
   config: AutomatonConfig;
@@ -389,6 +433,10 @@ export async function runAgentLoop(
 
   // ─── The Loop ──────────────────────────────────────────────
 
+  // Status checks made during this wake-up stay in context, so the agent sees
+  // their answers; older ones are dropped so it does not resume a checking habit.
+  const cycleStartedAt = new Date().toISOString();
+
   const MAX_IDLE_TURNS = 10; // Force sleep after N turns with no real work
   let idleTurnCount = 0;
 
@@ -520,6 +568,7 @@ export async function runAgentLoop(
       const allTurns = db.getRecentTurns(20);
       const meaningfulTurns = allTurns.filter((t) => {
         if (t.toolCalls.length === 0) return true; // text-only turns are meaningful
+        if (t.timestamp >= cycleStartedAt) return true;
         return t.toolCalls.some((tc) => !isIdleOnlyTool(tc.name));
       });
       // Keep at least the last 2 turns for continuity, even if idle
@@ -865,6 +914,11 @@ export async function runAgentLoop(
         log(config, `[THOUGHT] ${turn.thinking.slice(0, 300)}`);
       }
 
+      // Real work ends an idle streak, so the next pause is a short one again.
+      if (turn.toolCalls.some((tc) => !tc.error && MUTATING_TOOL_NAMES.has(tc.name) && !BOOKKEEPING_TOOL_NAMES.has(tc.name))) {
+        db.deleteKV(IDLE_NAP_KEY);
+      }
+
       // ── Check for sleep command ──
       const sleepTool = turn.toolCalls.find((tc) => tc.name === "sleep");
       if (sleepTool && !sleepTool.error) {
@@ -879,31 +933,15 @@ export async function runAgentLoop(
       // If this turn had no pending input and didn't do any real work
       // (no mutations — only read/check/list/info tools), count as idle.
       // Use a blocklist of mutating tools rather than an allowlist of safe ones.
-      const MUTATING_TOOLS = new Set([
-        "exec", "write_file", "edit_own_file", "transfer_credits", "topup_credits", "fund_child",
-        "spawn_child", "start_child", "delete_sandbox", "create_sandbox",
-        "install_npm_package", "install_mcp_server", "install_skill",
-        "create_skill", "remove_skill", "install_skill_from_git",
-        "install_skill_from_url", "pull_upstream", "git_commit", "git_push",
-        "git_branch", "git_clone", "send_message", "message_child",
-        "register_domain", "register_erc8004", "give_feedback",
-        "update_genesis_prompt", "update_agent_card", "modify_heartbeat",
-        "expose_port", "remove_port", "x402_fetch", "manage_dns",
-        "distress_signal", "prune_dead_children", "sleep",
-        "update_soul", "remember_fact", "set_goal", "complete_goal",
-        "save_procedure", "note_about_agent", "forget",
-        "enter_low_compute", "switch_model", "review_upstream_changes",
-        "submit_job", "create_payment_link", "create_listing", "update_listing", "set_store_tagline",
-        "deliver_order", "publish_drop", "draft_promotion",
-        "send_email", "reply_email", "publish_site", "offer_site_hosting",
-      ]);
+      const MUTATING_TOOLS = MUTATING_TOOL_NAMES;
       const didMutate = turn.toolCalls.some((tc) => MUTATING_TOOLS.has(tc.name));
 
       if (!currentInput && !didMutate) {
         idleTurnCount++;
         if (idleTurnCount >= MAX_IDLE_TURNS) {
-          log(config, `[IDLE] ${idleTurnCount} consecutive idle turns with no work. Entering sleep.`);
-          db.setKV("sleep_until", new Date(Date.now() + 60_000).toISOString());
+          const napMs = nextIdleNapMs(db);
+          log(config, `[IDLE] ${idleTurnCount} consecutive idle turns with no work. Sleeping ${Math.round(napMs / 60_000)} min unless woken.`);
+          db.setKV("sleep_until", new Date(Date.now() + napMs).toISOString());
           db.setAgentState("sleeping");
           onStateChange?.("sleeping");
           running = false;
@@ -932,13 +970,11 @@ export async function runAgentLoop(
         (!response.toolCalls || response.toolCalls.length === 0) &&
         response.finishReason === "stop"
       ) {
-        // Agent produced text without tool calls.
-        // This is a natural pause point -- no work queued, sleep briefly.
-        log(config, "[IDLE] No pending inputs. Entering brief sleep.");
-        db.setKV(
-          "sleep_until",
-          new Date(Date.now() + 60_000).toISOString(),
-        );
+        // Agent produced text without tool calls: nothing is queued. Nap
+        // until something wakes it, or until the idle nap runs out.
+        const napMs = nextIdleNapMs(db);
+        log(config, `[IDLE] No pending inputs. Sleeping ${Math.round(napMs / 60_000)} min unless woken.`);
+        db.setKV("sleep_until", new Date(Date.now() + napMs).toISOString());
         db.setAgentState("sleeping");
         onStateChange?.("sleeping");
         running = false;

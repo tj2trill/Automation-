@@ -119,6 +119,51 @@ describe("Agent Loop", () => {
     expect(inference.lowComputeMode).toBe(true);
   });
 
+  it("shows the agent the answer to a status check it made during this wake-up", async () => {
+    const inference = new MockInferenceClient([
+      toolCallResponse([{ name: "check_credits", arguments: {} }]),
+      noToolResponse("Nothing to do."),
+    ]);
+    await runAgentLoop({ identity, config, db, conway, inference });
+    expect(inference.calls.length).toBe(2);
+    const second = inference.calls[1].messages;
+    const checked = second.find((m) => m.role === "assistant" && (m as any).tool_calls?.some((tc: any) => tc.function?.name === "check_credits"));
+    expect(checked).toBeDefined();
+    expect(second.some((m) => m.role === "tool")).toBe(true);
+  });
+
+  it("hides status checks from earlier wake-ups", async () => {
+    await runAgentLoop({ identity, config, db, conway, inference: new MockInferenceClient([
+      toolCallResponse([{ name: "exec", arguments: { command: "echo work" } }]),
+      toolCallResponse([{ name: "check_credits", arguments: {} }]),
+      noToolResponse("Done."),
+    ]) });
+    db.deleteKV("sleep_until");
+    const later = new MockInferenceClient([noToolResponse("Still nothing.")]);
+    await runAgentLoop({ identity, config, db, conway, inference: later });
+    const names = later.calls[0].messages.flatMap((m: any) => (m.tool_calls ?? []).map((tc: any) => tc.function?.name));
+    expect(names).toContain("exec");
+    expect(names).not.toContain("check_credits");
+  });
+
+  it("naps longer each time it wakes with nothing to do, and short again after real work", async () => {
+    const napMinutes = () => Math.round((Date.parse(db.getKV("sleep_until")!) - Date.now()) / 60_000);
+    const wake = async (responses: any[]) => {
+      db.deleteKV("sleep_until");
+      await runAgentLoop({ identity, config, db, conway, inference: new MockInferenceClient(responses) });
+    };
+    await wake([noToolResponse("Waiting.")]);
+    expect(napMinutes()).toBe(15);
+    await wake([noToolResponse("Waiting.")]);
+    expect(napMinutes()).toBe(30);
+    await wake([toolCallResponse([{ name: "remember_fact", arguments: { category: "self", key: "k", value: "v" } }]), noToolResponse("Noted.")]);
+    expect(napMinutes()).toBe(60);
+    for (let i = 0; i < 6; i++) await wake([noToolResponse("Waiting.")]);
+    expect(napMinutes()).toBe(360);
+    await wake([toolCallResponse([{ name: "exec", arguments: { command: "echo built" } }]), noToolResponse("Built it.")]);
+    expect(napMinutes()).toBe(15);
+  });
+
   it("sleep tool transitions state", async () => {
     const inference = new MockInferenceClient([
       toolCallResponse([

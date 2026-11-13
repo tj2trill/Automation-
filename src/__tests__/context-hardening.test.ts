@@ -540,3 +540,16 @@ describe("DEFAULT_TOKEN_BUDGET", () => {
     expect(sum).toBe(DEFAULT_TOKEN_BUDGET.total);
   });
 });
+
+describe("buildContextMessages with tool calls and no text", () => {
+  it("still shows the calls and their results", () => {
+    const turn = makeTurn({
+      thinking: "",
+      toolCalls: [{ id: "call_1", name: "check_fitness", arguments: {}, result: "Earned: $1.00", durationMs: 5 } as any],
+    });
+    const messages = buildContextMessages("System prompt", [turn]);
+    const assistant = messages.find((m) => m.role === "assistant");
+    expect(assistant?.tool_calls?.[0]?.function.name).toBe("check_fitness");
+    expect(messages.find((m) => m.role === "tool")).toMatchObject({ tool_call_id: "call_1", content: "Earned: $1.00" });
+  });
+});

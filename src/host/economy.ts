@@ -667,6 +667,9 @@ export class Economy {
       }
     }
     this.store.revokeApiKeys(address);
+    // Selection decides who lives, not who keeps the money: what a dead agent
+    // did not spend goes back to the creator to fund the next one.
+    const reclaimedMicro = this.store.reclaim(address);
     this.store.db.transaction(() => {
       this.store.setDead(address);
       this.store.db.prepare("DELETE FROM starvation WHERE address = ?").run(address);
@@ -684,7 +687,7 @@ export class Economy {
         this.opts.log?.(`after death of ${address}: ${err instanceof Error ? err.message : String(err)}`);
       }
     }
-    this.opts.log?.(`agent ${account?.label || address} died: ${reason}`);
+    this.opts.log?.(`agent ${account?.label || address} died: ${reason}${reclaimedMicro > 0 ? `; ${formatUsd(reclaimedMicro)} unspent returned to you` : ""}`);
   }
 
   // ─── Standings ───────────────────────────────────────────────

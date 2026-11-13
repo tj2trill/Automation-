@@ -396,7 +396,7 @@ async function cmdPs(): Promise<void> {
     for (const s of o.orphanSandboxes) console.log(`  ${s.id}  ${s.name.padEnd(24)} ${s.state}  owner ${s.owner.slice(0, 10)}…`);
   }
   console.log(
-    `\nFunded ${formatUsd(o.totals.fundedMicro)} · inference ${formatUsd(o.totals.inferenceMicro)} · compute ${formatUsd(o.totals.computeMicro)} · held ${formatUsd(o.totals.balanceMicro)} · sandboxes ${o.totals.sandboxes}/${o.totals.sandboxLimit}`,
+    `\nFunded ${formatUsd(o.totals.fundedMicro)} · returned from the dead ${formatUsd(o.totals.reclaimedMicro)} · inference ${formatUsd(o.totals.inferenceMicro)} · compute ${formatUsd(o.totals.computeMicro)} · held ${formatUsd(o.totals.balanceMicro)} · sandboxes ${o.totals.sandboxes}/${o.totals.sandboxLimit}`,
   );
   store.close();
 }

@@ -299,7 +299,8 @@ function render() {
     el("strong", { text: usd(t.inferenceMicro) }), " on inference and ",
     el("strong", { text: usd(t.computeMicro) }), " on compute and earned ",
     el("strong", { text: usd(o.economy.earnedMicro) }), " from jobs and customers. ",
-    el("strong", { text: usd(t.balanceMicro, 2) }), " is still held.");
+    el("strong", { text: usd(t.balanceMicro, 2) }), " is still held" +
+    (t.reclaimedMicro > 0 ? ", and " + usd(t.reclaimedMicro, 2) + " left unspent by dead agents came back to you." : "."));
   $("audit").textContent = (o.ledgerAudit.ok
     ? "Ledger checked: every balance equals the sum of its entries."
     : "Ledger mismatch on " + o.ledgerAudit.mismatches + " account(s). Run automaton-host ledger.")

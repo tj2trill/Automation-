@@ -37,7 +37,8 @@ export type LedgerKind =
   | "adjustment"
   | "job_reward" // paid by the creator for a job whose check passed
   | "sale" // a customer paid through Stripe
-  | "refund"; // the creator refunded a customer; taken back from the agent
+  | "refund" // the creator refunded a customer; taken back from the agent
+  | "reclaimed"; // a dead agent's unspent balance, returned to the creator
 
 /**
  * Money that entered from outside the agent population, net of refunds.
@@ -417,6 +418,20 @@ export class HostStore {
     if (amountMicro <= 0) throw new Error("Top-up amount must be positive");
     if (this.isDead(address)) throw new AccountDeadError(normalizeAddress(address));
     return this.db.transaction(() => this.applyEntry(address, amountMicro, "topup", null, note))();
+  }
+
+  /**
+   * Take back what is left in an account that is about to die, so the
+   * creator can fund another agent with it. Returns the amount, or 0.
+   */
+  reclaim(address: string, note = "unspent balance returned to the creator at death"): number {
+    return this.db.transaction(() => {
+      if (this.isDead(address)) return 0;
+      const balance = this.getBalanceMicro(address);
+      if (balance <= 0) return 0;
+      this.applyEntry(address, -balance, "reclaimed", null, note);
+      return balance;
+    })();
   }
 
   /**

@@ -164,8 +164,10 @@ export function buildContextMessages(
       });
     }
 
-    // The agent's thinking as assistant message
-    if (turn.thinking) {
+    // The agent's reply. Models often call tools without writing any text;
+    // those calls and their results must still be shown, or the agent never
+    // sees what it just did and repeats it.
+    if (turn.thinking || turn.toolCalls.length > 0) {
       const msg: ChatMessage = {
         role: "assistant",
         content: turn.thinking,

@@ -102,6 +102,8 @@ export interface Overview {
   totals: {
     balanceMicro: number;
     fundedMicro: number;
+    /** Unspent balances taken back from dead agents. */
+    reclaimedMicro: number;
     inferenceMicro: number;
     computeMicro: number;
     sandboxes: number;
@@ -299,6 +301,7 @@ export class HostAdmin {
       totals: {
         balanceMicro: accounts.reduce((t, a) => t + a.balanceMicro, 0),
         fundedMicro: sumKind("topup"),
+        reclaimedMicro: -sumKind("reclaimed"),
         inferenceMicro: -sumKind("inference"),
         computeMicro: -sumKind("compute"),
         sandboxes: sandboxes.length,

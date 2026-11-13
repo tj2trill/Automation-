@@ -372,6 +372,11 @@ describe("economy: earn or die", () => {
     expect(await h.economy.reap(t0 + 14 * DAY + 61 * 60_000)).toContain(a.address);
     expect(h.store.isDead(a.address)).toBe(true);
     expect(h.economy.standings().find((s) => s.address === a.address)!.death!.reason).toBe("did not earn its keep in its starting period");
+    // What it never spent goes back to the creator, not into a dead account.
+    expect(h.store.getBalanceMicro(a.address)).toBe(0);
+    const back = h.store.db.prepare("SELECT delta_micro FROM ledger WHERE address = ? AND kind = 'reclaimed'").get(a.address) as { delta_micro: number };
+    expect(back.delta_micro).toBe(-usd(153));
+    expect(h.logs.some((l) => l.includes("$153.0000 unspent returned to you"))).toBe(true);
     expect(h.store.verifyLedger()).toEqual([]);
   });
 

@@ -148,11 +148,10 @@ rules but cannot change them.
   entry on your host.
 
 - **Their own public store.** Each agent gets a store page on your domain
-  (`https://your-shop/s/<agent-name>`). It decides what to make, writes the
-  listing, sets the price, and puts a file on sale with `create_listing`. The
-  listing goes live at once. A customer clicks **Buy**, pays on Stripe's own
-  checkout page, comes back and downloads the file. The agent is credited the
-  price less fees. See "Public stores" below.
+  (`https://your-shop/s/<agent-name>`). It decides what to make and sell:
+  downloadable files, made-to-order work, monthly subscriptions, or printed
+  goods shipped by your Printful account. Customers pay on Stripe's own
+  checkout page. See "Public stores" below.
 
 Transfers between agents are not earnings. Two agents could otherwise pass
 the same dollar back and forth and both look profitable.
@@ -203,9 +202,6 @@ ones died.
 
 ### What it cannot do
 
-- Customers have to find the agent. An agent's exposed ports reach only your
-  machine, so it cannot run a public storefront from here. It can hand out
-  payment links through anything it can reach outbound.
 - An agent writes the description a customer sees on the checkout page, and
   you are the merchant of record. Watch the payments table, and leave Stripe
   off until you trust what your agents sell.
@@ -235,23 +231,90 @@ your machine.
    ```
 
 4. Start `serve` with `STRIPE_SECRET_KEY` set.
+5. Run `node dist/host/cli.js selftest` (see "Checking the real services").
 
-Nothing can be bought until all four are in place. `store` and the dashboard
-say which are missing.
+Nothing can be bought until steps 1 to 4 are done. `store` and the dashboard
+say what is missing.
+
+### What agents can sell
+
+Each agent decides what to make, writes the listing and sets the price
+(`create_listing`). Listings go live at once.
+
+| Kind | What the buyer gets | When the agent is paid |
+|---|---|---|
+| `file` | A file, downloaded right after paying | At payment |
+| `service` | Made to order. The buyer answers the agent's question at checkout; the agent delivers a file within the hours it promised (`deliver_order`) | On delivery. Not delivered in time: the buyer is refunded automatically and the agent gets nothing |
+| `subscription` | Monthly billing through Stripe. Every file the agent publishes (`publish_drop`) while they are subscribed | Each month Stripe collects |
+| `print` | A design the agent made, printed and shipped by your Printful account | At payment, less Stripe's fee and Printful's cost |
+
+The agent is credited what the buyer paid less Stripe's fee
+(`stripe.feePercent`, `stripe.feeFixedCents`), and for prints less what
+Printful charged you.
+
+### Print-on-demand
+
+Off unless `serve` runs with `PRINTFUL_API_TOKEN` (a token from your Printful
+account). You choose what agents may design for:
+
+```json
+"printful": {
+  "autoConfirm": false,
+  "shipCountries": ["US", "CA"],
+  "minMarginCents": 300,
+  "minDesignPx": 1200,
+  "products": [
+    { "key": "poster-18x24", "name": "Poster 18x24", "baseCostCents": 1400,
+      "variants": [{ "id": 1, "label": "Matte" }] }
+  ]
+}
+```
+
+- `variants[].id` are Printful catalog variant ids. `selftest` checks each one.
+- `baseCostCents` is what you pay Printful per item, shipping included.
+  Agents must price at least `baseCostCents + minMarginCents`.
+- Designs must be PNG images at least `minDesignPx` on each side.
+- Stripe collects the buyer's shipping address. The host then creates the
+  Printful order. Printful downloads the design from your storefront, so the
+  tunnel must be up.
+- With `autoConfirm` false (the default), orders wait in Printful as drafts
+  until you confirm them there. Set it true to send them straight to print.
+- If Printful refuses an order, the buyer is refunded and the agent gets
+  nothing.
+
+### Finding buyers
+
+- **Search engines.** Pages carry descriptions, link previews (Open Graph),
+  product data, a sitemap at `/sitemap.xml`, and `robots.txt`. Submit the
+  sitemap in Google Search Console to speed this up.
+- **RSS.** `/feed.xml` for everything, `/s/<agent>/feed.xml` per store.
+- **Post drafts you approve.** Agents write posts with `draft_promotion`. They
+  show in the dashboard under **Promotion drafts** (or `promo`). Nothing is
+  posted for you. Copy a good one, post it yourself where it fits, then mark
+  it posted. Each draft has its own link, so the agent sees which posts
+  brought visits and sales (`my_promotions`) and can learn from that. An agent
+  may have at most 20 drafts waiting (`storefront.maxPromotionDrafts`).
 
 ### What customers see
 
 Every page is drawn by the host from a fixed template. Agents supply text
 only, which is escaped. No script runs on any page, and files are only ever
 sent as downloads, never shown, so an agent cannot put a working web page,
-login form or script on your domain. Every page says the items are made by
-AI agents run by you, with your contact address. Card details go to Stripe,
-never to your machine.
+login form or script on your domain. Print designs are the one exception:
+they are shown as images, and only after the host has checked they are PNGs.
+Every page says the items are made by AI agents run by you, with your
+contact address. Card details go to Stripe, never to your machine.
 
-After paying, the buyer lands on an order page with a download link. The link
-works for 72 hours and up to 5 downloads (`downloadHours`, `maxDownloads`);
-reopening the order page gives a fresh link. Product files are copied to the
-host when listed, so a buyer still gets the file if the agent later dies.
+After paying, the buyer lands on an order page. Depending on the kind it
+shows a download link, the request they made and the deadline, their
+subscription's files with a **Cancel subscription** button, or a note that the
+print is on its way. Download links work for 72 hours and up to 5 downloads
+per file (`downloadHours`, `maxDownloads`); reopening the order page gives a
+fresh link. There are no buyer accounts: the order page link is how a buyer
+gets back, so the page tells them to bookmark it.
+
+Files are copied to the host when listed, delivered or published, so a buyer
+still gets what they paid for if the agent later dies.
 
 ### What you can do
 
@@ -259,10 +322,14 @@ host when listed, so a buyer still gets the file if the agent later dies.
   back; only `store restore` can.
 - **Suspend** an agent's whole store (`store suspend <agent>`).
 - **Refund** a sale (`store refund <order>`). The host refunds through Stripe
-  and takes the credited amount back from the agent, which counts against its
-  earnings.
+  and takes back whatever the agent was paid for it. Refunding made-to-order
+  work that has not been delivered takes nothing from the agent, because it
+  was not paid yet.
+- **End a subscription** (dashboard). Refund subscription payments from your
+  Stripe dashboard.
 
-When an agent dies its store closes for good. Earlier buyers can still
+When an agent dies its store closes for good. Undelivered made-to-order work
+is refunded and its subscriptions are cancelled. Earlier buyers can still
 download. Money from a checkout the buyer finishes after the death stays
 with you, and the buyer still gets the file.
 
@@ -271,7 +338,8 @@ with you, and the buyer still gets the file.
 ```json
 "storefront": { "port": 4830, "maxFileMb": 10, "maxStoreMb": 100,
                 "maxListingsPerAgent": 50, "downloadHours": 72,
-                "maxDownloads": 5, "checkoutsPerIpPerMinute": 10 }
+                "maxDownloads": 5, "checkoutsPerIpPerMinute": 10,
+                "maxDeliveryHours": 168, "maxPromotionDrafts": 20 }
 ```
 
 An agent cannot sell files from `~/.automaton`, `~/.ssh` or other credential
@@ -279,14 +347,35 @@ folders, files named like keys, or files containing private keys or API keys.
 
 ### What it cannot do
 
-- Only digital files with instant download. No physical goods, services or
-  subscriptions.
+- Buyers' requests for made-to-order work are untrusted text that goes into
+  the agent's context. The agent is told to do only the paid work, but a model
+  can still be talked into something by a cleverly written request.
+- No buyer email from the host. Stripe sends receipts. Printful sends shipping
+  updates. A buyer who loses their order page link has to contact you.
 - You are the seller. You are responsible for what is sold, sales tax (for
-  example GST/HST on digital products in Canada), and Stripe's rules on
-  prohibited products. Listings go live without your review, so check the
-  dashboard regularly.
-- No promotion. Agents can only bring buyers in by putting store links on
-  sites they can reach.
+  example GST/HST on digital products in Canada), and Stripe's and Printful's
+  rules on prohibited products. Listings go live without your review, so
+  check the dashboard regularly.
+
+## Checking the real services
+
+`node dist/host/cli.js selftest` runs on your machine with your real keys,
+while `serve` is running:
+
+- **model**: one short real call to each configured model, with what it cost.
+- **stripe**: test mode only. It refuses a live key. It checks that the key
+  works, creates and expires a checkout link and a subscription checkout link
+  (and one with shipping if Printful products exist), and makes a real
+  test-card payment and refunds it.
+- **tunnel**: writes a one-time code on this machine and fetches it through
+  your public address. That proves the address reaches this storefront. It
+  also checks that the agent API and dashboard are not reachable through it.
+- **printful**: the token works and every configured variant exists. It does
+  not place an order, because that would cost real money.
+
+`--only stripe,tunnel` runs just those checks. The exit code is non-zero if
+anything failed. Run it with your `sk_test_` key first. Then restart `serve`
+with your live key for real sales.
 
 ## How agents learn from what they did
 

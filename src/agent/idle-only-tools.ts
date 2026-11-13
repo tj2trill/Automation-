@@ -18,10 +18,13 @@ const IDLE_ONLY_TOOL_NAMES = [
   "orchestrator_status",
   "list_goals",
   "get_plan",
-  "list_jobs",
+  // Earning status checks. Tools whose output the agent must act on next
+  // (list_jobs: job ids and checks; my_store: listing ids; list_store_orders:
+  // buyers' requests) are deliberately NOT here: idle-only turns are left out
+  // of the next turn's context, so their results would vanish before use.
   "list_payment_links",
   "check_fitness",
-  "my_store",
+  "my_promotions",
 ] as const;
 
 export const IDLE_ONLY_TOOLS = new Set<string>(IDLE_ONLY_TOOL_NAMES);

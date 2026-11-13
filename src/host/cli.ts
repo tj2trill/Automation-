@@ -16,6 +16,7 @@ import {
   getHostDbPath,
   loadHostConfig,
   getHostDir,
+  loadPrintfulToken,
   loadStripeKey,
   loadUpstreamKeys,
   modelForRole,
@@ -38,6 +39,7 @@ import { formatLearningEval, runLearningEval } from "./eval-learning.js";
 import { startHostServer } from "./server.js";
 import { Economy } from "./economy.js";
 import { Storefront, startStorefrontServer } from "./storefront.js";
+import { ALL_CHECKS, formatSelftest, runSelftest, type CheckName } from "./selftest.js";
 import { formatUsd, HostStore } from "./store.js";
 
 function repoRoot(): string {
@@ -90,6 +92,7 @@ function openAdmin(): { admin: HostAdmin; store: HostStore; config: HostConfig }
   });
   const storefront = new Storefront(config, store, economy, {
     filesDir: path.join(getHostDir(), "store-files"),
+    printfulToken: loadPrintfulToken(),
     log: (m) => console.log(`[${new Date().toISOString()}] ${m}`),
   });
   return { admin: new HostAdmin(config, store, driver, creator.address, economy, storefront), store, config };
@@ -161,7 +164,8 @@ async function cmdServe(): Promise<void> {
   log(
     `public storefront on 127.0.0.1:${shop.port}` +
       (config.storefront.publicUrl ? ` — published as ${config.storefront.publicUrl} (via your Cloudflare Tunnel)` : " — not published: set storefront.publicUrl") +
-      (missing.length ? `; purchases off until set: ${missing.join(", ")}` : "; purchases on"),
+      (missing.length ? `; purchases off until set: ${missing.join(", ")}` : "; purchases on") +
+      (admin.storefront.printful ? `; print-on-demand on (${config.printful.products.length} products, ${config.printful.autoConfirm ? "orders go straight to print" : "orders wait as Printful drafts for you to confirm"})` : "; print-on-demand off (set PRINTFUL_API_TOKEN)"),
   );
 
   const token = loadOrCreateDashboardToken();
@@ -436,6 +440,24 @@ async function cmdJob(args: string[]): Promise<void> {
   }
 }
 
+async function cmdSelftest(args: string[]): Promise<void> {
+  const { flags } = parseFlags(args);
+  const config = loadHostConfig();
+  const only = typeof flags.only === "string" ? (flags.only.split(",").map((s) => s.trim()).filter(Boolean) as CheckName[]) : undefined;
+  if (only && !only.every((c) => ALL_CHECKS.includes(c))) die(`--only takes a comma list of: ${ALL_CHECKS.join(", ")}`);
+  console.log(`Checking ${(only ?? ALL_CHECKS).join(", ")}. Stripe runs in test mode only; no Printful order is placed.\n`);
+  const results = await runSelftest({
+    config,
+    hostDir: getHostDir(),
+    only,
+    stripeKey: loadStripeKey(),
+    printfulToken: loadPrintfulToken(),
+    chat: createUpstreamChat(config, loadUpstreamKeys()),
+  });
+  console.log(formatSelftest(results));
+  if (results.some((r) => !r.ok && !r.skipped)) process.exitCode = 1;
+}
+
 async function cmdStore(args: string[]): Promise<void> {
   const [sub, ...rest] = args;
   const { admin, store, config } = openAdmin();
@@ -480,6 +502,27 @@ Then set "storefront": { "publicUrl": "https://${host}", "operatorName": "...", 
 in ${getHostConfigPath()} and restart serve. Never point the tunnel at port ${config.port} or ${config.dashboardPort}.`);
     } else {
       die("usage: store [ls] | store pull|restore <listing> | store suspend|resume <agent> | store refund <order> | store tunnel");
+    }
+  } finally {
+    store.close();
+  }
+}
+
+async function cmdPromo(args: string[]): Promise<void> {
+  const [sub, id] = args;
+  const { admin, store } = openAdmin();
+  try {
+    if (sub === undefined || sub === "ls") {
+      const list = admin.stores().promotions;
+      if (list.length === 0) console.log("No promotion drafts.");
+      for (const p of list) {
+        console.log(`\n${p.id}  [${p.status}]  ${p.name} for ${p.platform}  (${p.views} visits, ${p.sales} sales)\n${p.text}${p.link ? `\n${p.link}` : ""}`);
+      }
+    } else if (sub === "posted" || sub === "discard") {
+      const p = await admin.setPromotionStatus(id || "", sub === "posted" ? "posted" : "discarded");
+      console.log(`${p.id} marked ${p.status}`);
+    } else {
+      die("usage: promo [ls] | promo posted <id> | promo discard <id>");
     }
   } finally {
     store.close();
@@ -535,6 +578,14 @@ Public stores
   store suspend|resume <agent>       close / reopen an agent's whole store
   store refund <order-id>            refund the buyer through Stripe; taken back from the agent
   store tunnel                       how to publish the storefront with Cloudflare Tunnel
+  promo [ls] | promo posted|discard <id>   agents' promotion drafts
+
+Checking real services (run with serve running and your keys set)
+  selftest [--only model,stripe,tunnel,printful]
+                                     one real call per model; Stripe in TEST mode only
+                                     (checkout links, a test payment and its refund);
+                                     the public address reaches this storefront and not
+                                     the dashboard; Printful token and variants
 
 Control
   freeze <name> | unfreeze <name>    block / restore all spending and API actions
@@ -563,6 +614,8 @@ async function main(): Promise<void> {
     case "job": return cmdJob(rest);
     case "standings": return cmdStandings();
     case "store": return cmdStore(rest);
+    case "selftest": return cmdSelftest(rest);
+    case "promo": return cmdPromo(rest);
     case "ledger": return cmdLedger(rest);
     case "logs": return cmdLogs(rest);
     case "send": return cmdSend(rest);

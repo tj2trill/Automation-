@@ -17,6 +17,9 @@ import type {
   SelectionStatus,
   StoreListing,
   StoreView,
+  CreateListingInput,
+  StoreOrderRequest,
+  PromotionDraft,
   CreditsSpent,
   SpendByKind,
   ConwayClient,
@@ -415,6 +418,7 @@ export function createConwayClient(options: ConwayClientOptions): ConwayClient {
 
   const toListing = (l: any): StoreListing => ({
     id: String(l.id),
+    kind: String(l.kind ?? "file"),
     title: String(l.title ?? ""),
     description: String(l.description ?? ""),
     priceCents: Number(l.price_cents) || 0,
@@ -426,6 +430,11 @@ export function createConwayClient(options: ConwayClientOptions): ConwayClient {
     url: typeof l.url === "string" ? l.url : null,
     sales: Number(l.sales) || 0,
     salesNetCents: Number(l.sales_net_micro_usd) / 10_000 || 0,
+    subscribers: Number(l.subscribers) || 0,
+    waitingForDelivery: Number(l.waiting_for_delivery) || 0,
+    drops: Number(l.drops) || 0,
+    deliveryHours: l.delivery_hours == null ? null : Number(l.delivery_hours),
+    podProduct: typeof l.pod_product === "string" ? l.pod_product : null,
   });
 
   const getStore = async (): Promise<StoreView> => {
@@ -436,6 +445,9 @@ export function createConwayClient(options: ConwayClientOptions): ConwayClient {
       tagline: String(r.tagline ?? ""),
       suspendedByCreator: r.suspended_by_creator === true,
       openForPurchases: r.open_for_purchases === true,
+      printProducts: (Array.isArray(r.print_products) ? r.print_products : []).map((p: any) => ({
+        key: String(p.key), name: String(p.name), minPriceCents: Number(p.min_price_cents) || 0, options: Array.isArray(p.options) ? p.options.map(String) : [],
+      })),
       listings: (Array.isArray(r.listings) ? r.listings : []).map(toListing),
     };
   };
@@ -444,24 +456,57 @@ export function createConwayClient(options: ConwayClientOptions): ConwayClient {
     await request("POST", "/v1/store", { tagline }, once);
   };
 
-  const createListing = async (input: { title: string; description: string; priceCents: number; filename: string; contentBase64: string }): Promise<StoreListing> => {
+  const createListing = async (input: CreateListingInput): Promise<StoreListing> => {
     const r = await request(
       "POST",
       "/v1/store/listings",
-      { title: input.title, description: input.description, price_cents: input.priceCents, filename: input.filename, content_base64: input.contentBase64 },
+      {
+        kind: input.kind, title: input.title, description: input.description, price_cents: input.priceCents, filename: input.filename,
+        content_base64: input.contentBase64, delivery_hours: input.deliveryHours, request_prompt: input.requestPrompt, pod_product: input.podProduct,
+      },
       { ...once, timeout: 120_000 },
     );
     return toListing(r);
   };
 
-  const updateListing = async (id: string, patch: { title?: string; description?: string; priceCents?: number; live?: boolean }): Promise<StoreListing> => {
+  const updateListing = async (id: string, patch: { title?: string; description?: string; priceCents?: number; live?: boolean; deliveryHours?: number; requestPrompt?: string }): Promise<StoreListing> => {
     const r = await request(
       "POST",
       `/v1/store/listings/${encodeURIComponent(id)}`,
-      { title: patch.title, description: patch.description, price_cents: patch.priceCents, live: patch.live },
+      { title: patch.title, description: patch.description, price_cents: patch.priceCents, live: patch.live, delivery_hours: patch.deliveryHours, request_prompt: patch.requestPrompt },
       once,
     );
     return toListing(r);
+  };
+
+  const publishDrop = async (listingId: string, input: { title: string; filename: string; contentBase64: string }) => {
+    const r = await request("POST", `/v1/store/listings/${encodeURIComponent(listingId)}/drops`, { title: input.title, filename: input.filename, content_base64: input.contentBase64 }, { ...once, timeout: 120_000 });
+    return { id: String(r.id), subscribers: Number(r.subscribers) || 0 };
+  };
+
+  const listStoreOrders = async (): Promise<StoreOrderRequest[]> => {
+    const r = await request("GET", "/v1/store/orders", undefined, once);
+    return (Array.isArray(r.orders) ? r.orders : []).map((o: any) => ({
+      id: String(o.id), listingId: String(o.listing_id), title: String(o.title ?? ""), request: String(o.request ?? ""), dueAt: String(o.due_at ?? ""), priceCents: Number(o.price_cents) || 0,
+    }));
+  };
+
+  const deliverOrder = async (orderId: string, input: { filename: string; contentBase64: string; note?: string }) => {
+    const r = await request("POST", `/v1/store/orders/${encodeURIComponent(orderId)}/deliver`, { filename: input.filename, content_base64: input.contentBase64, note: input.note }, { ...once, timeout: 120_000 });
+    return { id: String(r.id), status: String(r.status), creditedCents: Number(r.credited_micro_usd) / 10_000 || 0 };
+  };
+
+  const toPromotion = (p: any): PromotionDraft => ({
+    id: String(p.id), platform: String(p.platform ?? ""), text: String(p.text ?? ""), status: String(p.status ?? ""),
+    link: typeof p.link === "string" ? p.link : null, views: Number(p.views) || 0, sales: Number(p.sales) || 0,
+  });
+
+  const draftPromotion = async (input: { platform: string; text: string; listingId?: string }): Promise<PromotionDraft> =>
+    toPromotion(await request("POST", "/v1/promotions", { platform: input.platform, text: input.text, listing_id: input.listingId }, once));
+
+  const listPromotions = async (): Promise<PromotionDraft[]> => {
+    const r = await request("GET", "/v1/promotions", undefined, once);
+    return (Array.isArray(r.promotions) ? r.promotions : []).map(toPromotion);
   };
 
   const getCreditsPricing = async (): Promise<PricingTier[]> => {
@@ -755,7 +800,7 @@ export function createConwayClient(options: ConwayClientOptions): ConwayClient {
     listSandboxes,
     getCreditsBalance,
     getCreditsReceived,
-    ...(isSelfHosted(apiUrl) ? { getCreditsSpent, listJobs, submitJob, createPaymentLink, listPaymentLinks, getSelection, getStore, setStoreTagline, createListing, updateListing } : {}),
+    ...(isSelfHosted(apiUrl) ? { getCreditsSpent, listJobs, submitJob, createPaymentLink, listPaymentLinks, getSelection, getStore, setStoreTagline, createListing, updateListing, publishDrop, listStoreOrders, deliverOrder, draftPromotion, listPromotions } : {}),
     getCreditsPricing,
     transferCredits,
     registerAutomaton,

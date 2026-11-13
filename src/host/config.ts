@@ -81,7 +81,12 @@ export interface HostConfig {
   /** Longest a job's check may run against one submission. */
   jobCheckTimeoutSeconds: number;
   storefront: StorefrontConfig;
+  /** Print-on-demand through your own Printful account. Off unless PRINTFUL_API_TOKEN is set. */
+  printful: PrintfulConfig;
 }
+
+export type { PrintfulConfig, PrintfulProduct } from "./printful.js";
+import type { PrintfulConfig } from "./printful.js";
 
 export interface StorefrontConfig {
   /** Loopback port of the public storefront server; point Cloudflare Tunnel here. */
@@ -100,6 +105,10 @@ export interface StorefrontConfig {
   maxDownloads: number;
   /** Checkout sessions one visitor may start per minute. */
   checkoutsPerIpPerMinute: number;
+  /** Longest delivery time an agent may promise for made-to-order work. */
+  maxDeliveryHours: number;
+  /** Unposted promotion drafts one agent may have waiting for you. */
+  maxPromotionDrafts: number;
 }
 
 export interface SelectionConfig {
@@ -196,6 +205,17 @@ export const DEFAULT_HOST_CONFIG: HostConfig = {
     downloadHours: 72,
     maxDownloads: 5,
     checkoutsPerIpPerMinute: 10,
+    maxDeliveryHours: 168,
+    maxPromotionDrafts: 20,
+  },
+  printful: {
+    apiBase: "https://api.printful.com",
+    storeId: "",
+    autoConfirm: false,
+    shipCountries: ["US", "CA"],
+    minMarginCents: 300,
+    minDesignPx: 1200,
+    products: [],
   },
 };
 
@@ -221,6 +241,7 @@ export function loadHostConfig(): HostConfig {
     selection: { ...DEFAULT_HOST_CONFIG.selection, ...(raw.selection || {}) },
     stripe: { ...DEFAULT_HOST_CONFIG.stripe, ...(raw.stripe || {}) },
     storefront: { ...DEFAULT_HOST_CONFIG.storefront, ...(raw.storefront || {}) },
+    printful: { ...DEFAULT_HOST_CONFIG.printful, ...(raw.printful || {}) },
   };
   validateHostConfig(merged);
   return merged;
@@ -272,7 +293,22 @@ export function validateHostConfig(config: HostConfig): void {
   if (sf.port !== 0 && (sf.port === config.port || sf.port === config.dashboardPort)) {
     throw new Error("host.json: storefront.port must differ from the agent API and dashboard ports");
   }
-  for (const k of ["maxFileMb", "maxStoreMb", "maxListingsPerAgent", "downloadHours", "maxDownloads", "checkoutsPerIpPerMinute"] as const) {
+  const pf = config.printful;
+  if (!pf || !Array.isArray(pf.products) || !Array.isArray(pf.shipCountries)) throw new Error("host.json: printful.products and printful.shipCountries must be lists");
+  if (!pf.shipCountries.every((c) => typeof c === "string" && /^[A-Z]{2}$/.test(c))) throw new Error("host.json: printful.shipCountries must be two-letter codes like \"CA\"");
+  if (!(pf.minMarginCents >= 0) || !(pf.minDesignPx >= 1)) throw new Error("host.json: printful.minMarginCents and minDesignPx must be non-negative numbers");
+  const keys = new Set<string>();
+  for (const p of pf.products) {
+    if (!p || typeof p.key !== "string" || !/^[a-z0-9-]{1,40}$/.test(p.key)) throw new Error("host.json: each printful product needs a key of lowercase letters, digits and dashes");
+    if (keys.has(p.key)) throw new Error(`host.json: printful product key ${p.key} is used twice`);
+    keys.add(p.key);
+    if (typeof p.name !== "string" || !p.name.trim()) throw new Error(`host.json: printful product ${p.key} needs a name`);
+    if (!Number.isInteger(p.baseCostCents) || p.baseCostCents <= 0) throw new Error(`host.json: printful product ${p.key} needs baseCostCents (what you pay Printful, with shipping)`);
+    if (!Array.isArray(p.variants) || p.variants.length === 0 || !p.variants.every((v) => Number.isInteger(v?.id) && v.id > 0 && typeof v.label === "string" && v.label.trim())) {
+      throw new Error(`host.json: printful product ${p.key} needs variants like [{ "id": 4012, "label": "M" }]`);
+    }
+  }
+  for (const k of ["maxFileMb", "maxStoreMb", "maxListingsPerAgent", "downloadHours", "maxDownloads", "checkoutsPerIpPerMinute", "maxDeliveryHours", "maxPromotionDrafts"] as const) {
     if (!(typeof sf[k] === "number" && sf[k] > 0)) throw new Error(`host.json: storefront.${k} must be a positive number`);
   }
   if (!config.models.some((m) => m.roles?.includes("primary"))) {
@@ -308,6 +344,11 @@ export function loadOrCreateAdminToken(): string {
 export interface UpstreamKeys {
   anthropicApiKey?: string;
   openaiApiKey?: string;
+}
+
+/** Print-on-demand is off unless this is set in the environment of `serve`. */
+export function loadPrintfulToken(): string | undefined {
+  return process.env.PRINTFUL_API_TOKEN?.trim() || undefined;
 }
 
 /** Stripe is off unless this is set in the environment of `serve`. */

@@ -888,6 +888,7 @@ export async function runAgentLoop(
         "save_procedure", "note_about_agent", "forget",
         "enter_low_compute", "switch_model", "review_upstream_changes",
         "submit_job", "create_payment_link", "create_listing", "update_listing", "set_store_tagline",
+        "deliver_order", "publish_drop", "draft_promotion",
       ]);
       const didMutate = turn.toolCalls.some((tc) => MUTATING_TOOLS.has(tc.name));
 

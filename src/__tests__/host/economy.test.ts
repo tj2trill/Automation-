@@ -554,6 +554,7 @@ describe("economy: the agent's tools against a real host", () => {
     expect(prompt).toContain("You may create a child container only when your earned profit");
     expect(prompt).toContain("you are deleted permanently");
     expect(prompt).toContain("list_jobs, submit_job, create_listing, update_listing, my_store");
-    expect(prompt).toContain("create_listing puts a digital file you made on sale on a public web page");
+    expect(prompt).toContain("Your public store, on a web page anyone can buy from by card");
+    expect(prompt).toContain("draft_promotion writes a post for your creator to review");
   });
 });

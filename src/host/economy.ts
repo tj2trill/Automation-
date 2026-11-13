@@ -117,6 +117,8 @@ export type FetchLike = (url: string, init?: { method?: string; headers?: Record
   ok: boolean;
   status: number;
   json(): Promise<any>;
+  text?(): Promise<string>;
+  headers?: { get(name: string): string | null };
 }>;
 
 export interface EconomyOptions {
@@ -343,7 +345,7 @@ export class Economy {
   }
 
   /** Called with each agent's address when it dies, after its containers are gone. */
-  readonly deathHooks: Array<(address: string) => void> = [];
+  readonly deathHooks: Array<(address: string) => void | Promise<void>> = [];
 
   /** Authenticated call to the Stripe API. The secret key never leaves this class. */
   stripeRequest(method: "GET" | "POST", path: string, fields?: Record<string, string | number>): Promise<any> {
@@ -597,7 +599,7 @@ export class Economy {
     })();
     for (const hook of this.deathHooks) {
       try {
-        hook(address);
+        await hook(address);
       } catch (err) {
         this.opts.log?.(`after death of ${address}: ${err instanceof Error ? err.message : String(err)}`);
       }

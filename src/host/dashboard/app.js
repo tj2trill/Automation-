@@ -40,8 +40,14 @@ const state = {
   confirmingJob: {}, // job id -> true while a cancel awaits confirmation
   stores: null,
   confirmingRefund: {}, // order id -> true while a refund awaits confirmation
+  confirmingCancel: {}, // subscription order id -> true while a cancel awaits confirmation
 };
-const ORDER_STATUS = { paid: "Paid", paid_after_death: "Paid after the agent died", refunded: "Refunded" };
+const ORDER_STATUS = {
+  paid: "Paid", paid_after_death: "Paid after the agent died", refunded: "Refunded",
+  awaiting_delivery: "Waiting for the agent", refunding: "Refunding", delivered: "Delivered",
+  fulfilling: "Sent to Printful", subscribed: "Subscribed", canceled: "Subscription ended",
+};
+const KIND_LABEL = { file: "Download", service: "Made to order", subscription: "Subscription", print: "Print" };
 
 // ─── Small helpers ─────────────────────────────────────────────
 
@@ -389,7 +395,8 @@ function renderStores() {
   const s = state.stores;
   if (!s) return;
   $("stores-state").textContent = (s.publicUrl ? "Published at " + s.publicUrl + ". " : "Not published: set storefront.publicUrl and run a Cloudflare Tunnel to it. ") +
-    (s.missingForSales.length ? "Purchases are off until you set: " + s.missingForSales.join(", ") + "." : "Purchases are on. Listings go live as soon as an agent makes them; pull anything you would not sell yourself.");
+    (s.missingForSales.length ? "Purchases are off until you set: " + s.missingForSales.join(", ") + "." : "Purchases are on. Listings go live as soon as an agent makes them; pull anything you would not sell yourself.") +
+    (s.printEnabled ? " Print-on-demand is on." : " Print-on-demand is off.");
   $("stores").replaceChildren(...s.stores.map((st) => {
     const items = s.listings.filter((l) => l.address === st.address);
     return el("div", { class: "store", data: { store: st.address } },
@@ -402,8 +409,12 @@ function renderStores() {
       ...items.map((l) => el("div", { class: "listing", data: { listing: l.id } },
         el("div", { class: "job-main" },
           el("strong", { text: l.title }),
-          el("p", { class: "quiet", text: usd(l.priceCents * 1e4, 2) + " · " + l.filename + " · " + (l.pulled ? "pulled by you" : !l.live ? "off (agent)" : l.onSale ? "on sale" : "not on sale") +
-            " · " + l.sales.count + " sold, " + usd(l.sales.netMicro, 2) + " to the agent" }),
+          el("p", { class: "quiet", text: KIND_LABEL[l.kind] + " · " + usd(l.priceCents * 1e4, 2) + (l.kind === "subscription" ? "/month" : "") +
+            (l.kind === "file" ? " · " + l.filename : l.kind === "service" ? " · within " + l.deliveryHours + "h" : l.kind === "print" ? " · " + l.podProduct : "") +
+            " · " + (l.pulled ? "pulled by you" : !l.live ? "off (agent)" : l.onSale ? "on sale" : "not on sale") +
+            " · " + l.sales.count + " sold" + (l.kind === "subscription" ? ", " + l.sales.subscribers + " subscribed" : "") +
+            (l.kind === "service" && l.sales.waiting ? ", " + l.sales.waiting + " waiting" : "") +
+            ", " + usd(l.sales.netMicro, 2) + " to the agent" }),
           el("p", { class: "desc", text: l.description })),
         el("button", { type: "button", class: l.pulled ? "" : "danger", text: l.pulled ? "Put back" : "Pull",
           data: { action: l.pulled ? "listing-restore" : "listing-pull" },
@@ -412,21 +423,71 @@ function renderStores() {
   $("no-stores").hidden = s.stores.length > 0;
   $("orders").tBodies[0].replaceChildren(...s.orders.map((o) => {
     const confirming = !!state.confirmingRefund[o.id];
-    const canRefund = o.status === "paid" || o.status === "paid_after_death";
+    const canRefund = ["paid", "paid_after_death", "delivered", "fulfilling", "awaiting_delivery"].includes(o.status);
+    const canCancel = o.status === "subscribed";
+    let action = null;
+    if (canRefund) {
+      action = confirming
+        ? [el("button", { type: "button", class: "danger confirm", text: "Refund buyer", data: { action: "refund-confirm" }, on: { click: (e) => refundOrder(o, e.currentTarget) } }),
+           el("button", { type: "button", text: "Keep", data: { action: "refund-keep" }, on: { click: () => { delete state.confirmingRefund[o.id]; render(); } } })]
+        : el("button", { type: "button", text: "Refund", data: { action: "refund" }, on: { click: () => { state.confirmingRefund[o.id] = true; render(); } } });
+    } else if (canCancel) {
+      action = state.confirmingCancel[o.id]
+        ? [el("button", { type: "button", class: "danger confirm", text: "End subscription", data: { action: "sub-cancel-confirm" }, on: { click: (e) => cancelSub(o, e.currentTarget) } }),
+           el("button", { type: "button", text: "Keep", data: { action: "sub-cancel-keep" }, on: { click: () => { delete state.confirmingCancel[o.id]; render(); } } })]
+        : el("button", { type: "button", text: "Cancel", data: { action: "sub-cancel" }, on: { click: () => { state.confirmingCancel[o.id] = true; render(); } } });
+    }
+    const detail = o.kind === "service" && o.status === "awaiting_delivery" ? " · due " + timeOf(o.dueAt)
+      : o.kind === "print" && o.printfulOrderId ? " · Printful " + o.printfulOrderId + (o.variantLabel ? " · " + o.variantLabel : "")
+      : o.note ? " · " + o.note : "";
     return el("tr", { data: { order: o.id } },
       el("td", { text: o.paidAt ? timeOf(o.paidAt) : "" }),
       el("td", { text: o.name }),
-      el("td", { text: o.title }),
+      el("td", { text: KIND_LABEL[o.kind] + ": " + o.title + detail }),
       el("td", { class: "num", text: usd(o.amountCents * 1e4, 2) }),
       el("td", { class: "num", text: o.netMicro === null ? "" : usd(o.netMicro, 4) }),
       el("td", { text: ORDER_STATUS[o.status] || o.status }),
-      el("td", {}, !canRefund ? null : confirming
-        ? [el("button", { type: "button", class: "danger confirm", text: "Refund buyer", data: { action: "refund-confirm" }, on: { click: (e) => refundOrder(o, e.currentTarget) } }),
-           el("button", { type: "button", text: "Keep", data: { action: "refund-keep" }, on: { click: () => { delete state.confirmingRefund[o.id]; render(); } } })]
-        : el("button", { type: "button", text: "Refund", data: { action: "refund" }, on: { click: () => { state.confirmingRefund[o.id] = true; render(); } } })));
+      el("td", {}, action));
   }));
   $("orders").hidden = s.orders.length === 0;
   $("no-orders").hidden = s.orders.length > 0;
+
+  const drafts = s.promotions;
+  $("promotions").replaceChildren(...drafts.map((p) => el("div", { class: "job", data: { promotion: p.id } },
+    el("div", { class: "job-main" },
+      el("strong", { text: p.name + " · " + p.platform }),
+      el("p", { class: "quiet", text: (p.status === "posted" ? "Posted" : "Draft, not posted") + " · " + p.views + " visits, " + p.sales + " sales" }),
+      el("p", { class: "desc", text: p.text }),
+      p.link ? el("p", { class: "mono", text: p.link }) : null),
+    el("span", { class: "detail-actions" },
+      el("button", { type: "button", text: "Copy post", data: { action: "promo-copy" }, on: { click: (e) => copyPromotion(p, e.currentTarget) } }),
+      p.status === "draft"
+        ? [el("button", { type: "button", class: "primary", text: "Mark posted", data: { action: "promo-posted" }, on: { click: (e) => promotionAction(p, "posted", e.currentTarget) } }),
+           el("button", { type: "button", class: "danger", text: "Discard", data: { action: "promo-discard" }, on: { click: (e) => promotionAction(p, "discarded", e.currentTarget) } })]
+        : el("button", { type: "button", text: "Back to drafts", data: { action: "promo-draft" }, on: { click: (e) => promotionAction(p, "draft", e.currentTarget) } })))));
+  $("no-promotions").hidden = drafts.length > 0;
+}
+
+async function copyPromotion(p, button) {
+  const text = p.link ? p.text + "\n\n" + p.link : p.text;
+  if (await copyText(text)) say("Copied the post and its link. Paste it where it belongs, then mark it posted.");
+  else say("Could not copy on this device. Select the text and link above instead.");
+  button.focus();
+}
+
+function promotionAction(p, status, button) {
+  const words = { posted: ["Marking posted…", "Marked posted. Visits and sales through its link are counted for " + p.name + "."],
+    discarded: ["Discarding…", "Discarded. " + p.name + " can see it was discarded."],
+    draft: ["Moving back to drafts…", "Moved back to drafts."] }[status];
+  return act(button, words[0], () => api("POST", "/api/promotions/" + p.id + "/" + status, {}), words[1]);
+}
+
+function cancelSub(o, button) {
+  return act(button, "Ending " + o.title + " subscription…", async () => {
+    const r = await api("POST", "/api/orders/" + o.id + "/cancel-subscription", {});
+    delete state.confirmingCancel[o.id];
+    return r;
+  }, "Ended the subscription. The buyer is not charged again.");
 }
 
 function storeAction(st, verb, button) {
@@ -446,7 +507,9 @@ function refundOrder(o, button) {
     const r = await api("POST", "/api/orders/" + o.id + "/refund", {});
     delete state.confirmingRefund[o.id];
     return r;
-  }, "Refunded " + o.title + " through Stripe and took " + usd(o.netMicro || 0, 4) + " back from " + o.name + ".");
+  }, o.status === "awaiting_delivery"
+    ? "Refunded " + o.title + " through Stripe. The agent had not been paid for it."
+    : "Refunded " + o.title + " through Stripe and took back what " + o.name + " was paid for it.");
 }
 
 function jobRow(job) {

@@ -187,8 +187,41 @@ export interface PaymentLink {
   netCents?: number;
 }
 
+export interface CreateListingInput {
+  kind?: "file" | "service" | "subscription" | "print";
+  title: string;
+  description: string;
+  priceCents: number;
+  filename?: string;
+  contentBase64?: string;
+  deliveryHours?: number;
+  requestPrompt?: string;
+  podProduct?: string;
+}
+
+export interface StoreOrderRequest {
+  id: string;
+  listingId: string;
+  title: string;
+  /** The buyer's own words. Untrusted. */
+  request: string;
+  dueAt: string;
+  priceCents: number;
+}
+
+export interface PromotionDraft {
+  id: string;
+  platform: string;
+  text: string;
+  status: string;
+  link: string | null;
+  views: number;
+  sales: number;
+}
+
 export interface StoreListing {
   id: string;
+  kind: string;
   title: string;
   description: string;
   priceCents: number;
@@ -200,6 +233,11 @@ export interface StoreListing {
   url: string | null;
   sales: number;
   salesNetCents: number;
+  subscribers: number;
+  waitingForDelivery: number;
+  drops: number;
+  deliveryHours: number | null;
+  podProduct: string | null;
 }
 
 export interface StoreView {
@@ -208,6 +246,7 @@ export interface StoreView {
   tagline: string;
   suspendedByCreator: boolean;
   openForPurchases: boolean;
+  printProducts: Array<{ key: string; name: string; minPriceCents: number; options: string[] }>;
   listings: StoreListing[];
 }
 
@@ -480,8 +519,13 @@ export interface ConwayClient {
   /** Self-hosted public store: listings of digital files customers can buy. */
   getStore?(): Promise<StoreView>;
   setStoreTagline?(tagline: string): Promise<void>;
-  createListing?(input: { title: string; description: string; priceCents: number; filename: string; contentBase64: string }): Promise<StoreListing>;
-  updateListing?(id: string, patch: { title?: string; description?: string; priceCents?: number; live?: boolean }): Promise<StoreListing>;
+  createListing?(input: CreateListingInput): Promise<StoreListing>;
+  updateListing?(id: string, patch: { title?: string; description?: string; priceCents?: number; live?: boolean; deliveryHours?: number; requestPrompt?: string }): Promise<StoreListing>;
+  publishDrop?(listingId: string, input: { title: string; filename: string; contentBase64: string }): Promise<{ id: string; subscribers: number }>;
+  listStoreOrders?(): Promise<StoreOrderRequest[]>;
+  deliverOrder?(orderId: string, input: { filename: string; contentBase64: string; note?: string }): Promise<{ id: string; status: string; creditedCents: number }>;
+  draftPromotion?(input: { platform: string; text: string; listingId?: string }): Promise<PromotionDraft>;
+  listPromotions?(): Promise<PromotionDraft[]>;
   getCreditsPricing(): Promise<PricingTier[]>;
   transferCredits(
     toAddress: string,

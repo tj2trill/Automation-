@@ -736,17 +736,24 @@ function listingJson(sf: Storefront, l: ReturnType<Storefront["listListings"]>[n
   const sales = sf.salesOf(l.id);
   return {
     id: l.id,
+    kind: l.kind,
     title: l.title,
     description: l.description,
     price_cents: l.priceCents,
     filename: l.filename,
     file_bytes: l.fileBytes,
+    delivery_hours: l.deliveryHours,
+    request_prompt: l.requestPrompt,
+    pod_product: l.podProduct,
     live: l.live,
     pulled_by_creator: l.pulled,
     on_sale: sf.isOnSale(l),
-    url: sf.config.storefront.publicUrl ? `${sf.config.storefront.publicUrl.replace(/\/$/, "")}/p/${l.id}` : null,
+    url: sf.listingUrl(l.id),
     sales: sales.count,
     sales_net_micro_usd: sales.netMicro,
+    subscribers: sales.subscribers,
+    waiting_for_delivery: sales.waiting,
+    drops: l.kind === "subscription" ? sf.listDrops(l.id).length : 0,
     updated_at: l.updatedAt,
   };
 }
@@ -762,6 +769,7 @@ route("GET", /^\/v1\/store$/, async (ctx) => {
       tagline: v.store?.tagline ?? "",
       suspended_by_creator: v.store?.suspended ?? false,
       open_for_purchases: v.openForPurchases,
+      print_products: v.printProducts.map((p) => ({ key: p.key, name: p.name, min_price_cents: p.minPriceCents, options: p.options })),
       listings: v.listings.map((l) => listingJson(sf, l)),
     },
   };
@@ -778,7 +786,8 @@ route("POST", /^\/v1\/store\/listings$/, async (ctx) => {
   const sf = requireStorefront(ctx);
   const b = ctx.body || {};
   const l = sf.createListing(address, {
-    title: b.title, description: b.description, priceCents: b.price_cents, filename: b.filename, contentBase64: b.content_base64,
+    kind: b.kind, title: b.title, description: b.description, priceCents: b.price_cents, filename: b.filename, contentBase64: b.content_base64,
+    deliveryHours: b.delivery_hours, requestPrompt: b.request_prompt, podProduct: b.pod_product,
   });
   return { status: 201, body: listingJson(sf, l) };
 });
@@ -787,8 +796,52 @@ route("POST", /^\/v1\/store\/listings\/([0-9A-Z]{26})$/, async (ctx, [id]) => {
   const address = requireAccount(ctx);
   const sf = requireStorefront(ctx);
   const b = ctx.body || {};
-  const l = sf.updateListing(address, id!, { title: b.title, description: b.description, priceCents: b.price_cents, live: b.live });
+  const l = sf.updateListing(address, id!, {
+    title: b.title, description: b.description, priceCents: b.price_cents, live: b.live, deliveryHours: b.delivery_hours, requestPrompt: b.request_prompt,
+  });
   return { body: listingJson(sf, l) };
+});
+
+route("POST", /^\/v1\/store\/listings\/([0-9A-Z]{26})\/drops$/, async (ctx, [id]) => {
+  const address = requireAccount(ctx);
+  const sf = requireStorefront(ctx);
+  const b = ctx.body || {};
+  const d = sf.publishDrop(address, id!, { title: b.title, filename: b.filename, contentBase64: b.content_base64 });
+  return { status: 201, body: { id: d.id, title: d.title, filename: d.filename, file_bytes: d.fileBytes, subscribers: sf.salesOf(id!).subscribers } };
+});
+
+// Made-to-order work the agent owes. request is the buyer's own words: untrusted text.
+route("GET", /^\/v1\/store\/orders$/, async (ctx) => {
+  const address = requireAccount(ctx);
+  const sf = requireStorefront(ctx);
+  return {
+    body: {
+      orders: sf.openRequests(address).map((o) => ({ id: o.id, listing_id: o.listingId, title: o.title, request: o.requestText, due_at: o.dueAt, price_cents: o.amountCents })),
+    },
+  };
+});
+
+route("POST", /^\/v1\/store\/orders\/([0-9A-Z]{26})\/deliver$/, async (ctx, [id]) => {
+  const address = requireAccount(ctx);
+  const b = ctx.body || {};
+  const o = requireStorefront(ctx).deliver(address, id!, { filename: b.filename, contentBase64: b.content_base64, note: b.note });
+  return { body: { id: o.id, status: o.status, credited_micro_usd: o.netMicro } };
+});
+
+function promotionJson(p: ReturnType<Storefront["listPromotions"]>[number]) {
+  return { id: p.id, platform: p.platform, text: p.text, status: p.status, link: p.link, listing_id: p.listingId, views: p.views, sales: p.sales, created_at: p.createdAt };
+}
+
+route("POST", /^\/v1\/promotions$/, async (ctx) => {
+  const address = requireAccount(ctx);
+  const b = ctx.body || {};
+  const p = requireStorefront(ctx).draftPromotion(address, { platform: b.platform, text: b.text, listingId: b.listing_id });
+  return { status: 201, body: promotionJson(p) };
+});
+
+route("GET", /^\/v1\/promotions$/, async (ctx) => {
+  const address = requireAccount(ctx);
+  return { body: { promotions: requireStorefront(ctx).listPromotions({ address }).map(promotionJson) } };
 });
 
 // ─── Server plumbing ───────────────────────────────────────────

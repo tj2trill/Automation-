@@ -150,7 +150,14 @@ describe("storefront: public pages", () => {
     for (const p of ["/", "/s/alpha", `/p/${l.id}`]) {
       const r = await shop(h, "GET", p);
       expect(r.status).toBe(200);
-      expect(r.text).not.toMatch(/<script/i);
+      // The only script element allowed is search-engine data, which never runs,
+      // and nothing in it can close the element early.
+      const dataBlocks = [...r.text.matchAll(/<script type="application\/ld\+json">([\s\S]*?)<\/script>/g)].map((x) => x[1]!);
+      for (const b of dataBlocks) {
+        expect(b).not.toContain("<");
+        expect(JSON.parse(b)["@type"]).toBe("Product");
+      }
+      expect(r.text.replace(/<script type="application\/ld\+json">[\s\S]*?<\/script>/g, "")).not.toMatch(/<script/i);
       expect(r.text).not.toContain("<img");
       expect(r.text).not.toContain("<b>");
       expect(r.headers.get("content-security-policy")).toContain("default-src 'none'");
@@ -264,7 +271,7 @@ describe("storefront: buying", () => {
     const { sessionId, orderPath, orderId } = await buy(l.id);
     stripe.pay(sessionId);
     const link = /href="(\/d\/[A-Za-z0-9_-]+)"/.exec((await shop(h, "GET", orderPath)).text)![1]!;
-    h.store.db.prepare("UPDATE orders SET download_expires = ? WHERE id = ?").run(new Date(Date.now() - 1000).toISOString(), orderId);
+    h.store.db.prepare("UPDATE download_tokens SET expires_at = ? WHERE order_id = ?").run(new Date(Date.now() - 1000).toISOString(), orderId);
     expect((await shop(h, "GET", link)).status).toBe(410);
     expect((await shop(h, "GET", "/d/" + "x".repeat(32))).status).toBe(404);
   });
@@ -273,7 +280,7 @@ describe("storefront: buying", () => {
     const a = await agent(h, "alpha");
     const l = (await call(h.url, "POST", "/v1/store/listings", a.apiKey, listingBody())).json;
     const { sessionId, orderPath } = await buy(l.id);
-    expect(await h.storefront.pollOrders()).toEqual({ paid: 0, expired: 0 });
+    expect(await h.storefront.pollOrders()).toEqual({ paid: 0, expired: 0, refunded: 0 });
     stripe.pay(sessionId);
     expect((await h.storefront.pollOrders()).paid).toBe(1);
     expect((await h.storefront.pollOrders()).paid).toBe(0);
@@ -404,7 +411,7 @@ describe("storefront: what an agent may sell", () => {
       expect(await tools.get("my_store")!.execute({}, ctx)).toContain("You have no store yet");
       expect(await tools.get("create_listing")!.execute({ title: "Secret", description: "x", price_cents: 500, file_path: ".automaton/wallet.json" }, ctx)).toMatch(/^Blocked: Files under ~\/\.automaton/);
       const made = await tools.get("create_listing")!.execute({ title: "Guide", description: "A guide.", price_cents: 700, file_path: "products/guide.txt" }, ctx);
-      expect(made).toMatch(/^Listed [0-9A-Z]{26} "Guide" at \$7\.00: https:\/\/shop\.example\.com\/p\//);
+      expect(made).toMatch(/^Listed [0-9A-Z]{26} \[file\] "Guide" at \$7\.00: https:\/\/shop\.example\.com\/p\//);
       const id = /Listed ([0-9A-Z]{26})/.exec(made)![1]!;
       expect(await tools.get("create_listing")!.execute({ title: "Cheap", description: "x", price_cents: 1, file_path: "products/guide.txt" }, ctx)).toMatch(/^Blocked: price_cents/);
       expect(await tools.get("set_store_tagline")!.execute({ tagline: "Guides that work" }, ctx)).toBe("Tagline set.");
@@ -412,7 +419,7 @@ describe("storefront: what an agent may sell", () => {
       const view = await tools.get("my_store")!.execute({}, ctx);
       expect(view).toContain("Store: https://shop.example.com/s/alpha");
       expect(view).toContain("Tagline: Guides that work");
-      expect(view).toContain(`${id} "Guide" $9.00 guide.txt [on sale] sales: 0 ($0.00 to you)`);
+      expect(view).toContain(`${id} [file] "Guide" $9.00 [on sale] sold: 0 ($0.00 to you) guide.txt`);
       h.storefront.setPulled(id, true);
       expect(await tools.get("my_store")!.execute({}, ctx)).toContain("[pulled by your creator]");
     } finally {

@@ -13,7 +13,7 @@
 import fs from "fs";
 import path from "path";
 import { generatePrivateKey, privateKeyToAccount } from "viem/accounts";
-import { getHostDir, type HostConfig } from "./config.js";
+import { getHostDir, loadPrintfulToken, type HostConfig } from "./config.js";
 import type { ContainerState, SandboxDriver } from "./docker.js";
 import { Economy, EconomyError, type Standing } from "./economy.js";
 import { Storefront, StoreError } from "./storefront.js";
@@ -162,7 +162,7 @@ export class HostAdmin {
     storefront?: Storefront,
   ) {
     this.economy = economy ?? new Economy(config, store, driver, { creatorAddress });
-    this.storefront = storefront ?? new Storefront(config, store, this.economy, { filesDir: path.join(getHostDir(), "store-files") });
+    this.storefront = storefront ?? new Storefront(config, store, this.economy, { filesDir: path.join(getHostDir(), "store-files"), printfulToken: loadPrintfulToken() });
     // A dead agent's listings come down with it.
     this.economy.deathHooks.push((address) => this.storefront.removeStoreOf(address));
   }
@@ -408,15 +408,25 @@ export class HostAdmin {
       publicUrl: this.config.storefront.publicUrl || null,
       missingForSales: sf.missingForSales,
       stores: sf.listStores().map((s) => ({ ...s, name: names.get(s.address) ?? s.slug, url: sf.storeUrl(s.slug), dead: this.store.isDead(s.address) })),
+      printEnabled: Boolean(sf.printful),
       listings: sf.listListings({ includeRemoved: false }).map((l) => ({
         ...l,
         name: names.get(l.address) ?? l.address.slice(0, 10),
         onSale: sf.isOnSale(l),
         sales: sf.salesOf(l.id),
-        url: this.config.storefront.publicUrl ? `${this.config.storefront.publicUrl.replace(/\/$/, "")}/p/${l.id}` : null,
+        url: sf.listingUrl(l.id),
       })),
       orders: sf.listOrders({ paidOnly: true, limit: 100 }).map((o) => ({ ...o, name: names.get(o.address) ?? o.address.slice(0, 10) })),
+      promotions: sf.listPromotions().filter((p) => p.status !== "discarded").map((p) => ({ ...p, name: names.get(p.address) ?? p.address.slice(0, 10) })),
     };
+  }
+
+  setPromotionStatus(id: string, status: "posted" | "discarded" | "draft") {
+    return this.storeOp(() => this.storefront.setPromotionStatus(id, status));
+  }
+
+  cancelSubscription(id: string) {
+    return this.storeOp(() => this.storefront.creatorCancelSubscription(id));
   }
 
   pullListing(id: string, pulled: boolean) {

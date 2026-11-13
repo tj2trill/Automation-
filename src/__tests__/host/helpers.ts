@@ -11,7 +11,7 @@ import type { ContainerState, CreateContainerOptions, DriverExecResult, SandboxD
 import type { UpstreamChat } from "../../host/inference-proxy.js";
 import { startHostServer, type RunningHost } from "../../host/server.js";
 import { HostStore } from "../../host/store.js";
-import { Economy, type EconomyOptions } from "../../host/economy.js";
+import { Economy, type EconomyOptions, type FetchLike } from "../../host/economy.js";
 import { Storefront, startStorefrontServer } from "../../host/storefront.js";
 import fs from "fs";
 import os from "os";
@@ -181,7 +181,11 @@ export interface TestHost {
   close(): Promise<void>;
 }
 
-export async function startTestHost(overrides: Partial<HostConfig> = {}, economyOptions: EconomyOptions = {}): Promise<TestHost> {
+export async function startTestHost(
+  overrides: Partial<HostConfig> = {},
+  economyOptions: EconomyOptions = {},
+  storefrontOptions: { printfulToken?: string; printfulFetch?: FetchLike } = {},
+): Promise<TestHost> {
   const config = testConfig(overrides);
   const store = new HostStore(":memory:");
   const driver = new FakeDriver();
@@ -189,7 +193,7 @@ export async function startTestHost(overrides: Partial<HostConfig> = {}, economy
   const logs: string[] = [];
   const economy = new Economy(config, store, driver, { log: (m) => logs.push(m), ...economyOptions });
   const filesDir = fs.mkdtempSync(path.join(os.tmpdir(), "store-files-"));
-  const storefront = new Storefront(config, store, economy, { filesDir, log: (m) => logs.push(m) });
+  const storefront = new Storefront(config, store, economy, { filesDir, log: (m) => logs.push(m), ...storefrontOptions });
   economy.deathHooks.push((a) => storefront.removeStoreOf(a));
   const shop = await startStorefrontServer({ storefront, log: (m) => logs.push(m) });
   const running = await startHostServer(

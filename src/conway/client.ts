@@ -411,6 +411,8 @@ export function createConwayClient(options: ConwayClientOptions): ConwayClient {
       balanceCents: c(r.balance_micro_usd),
       starvingSince: r.starving_since ?? null,
       diesAt: r.dies_at ?? null,
+      starvingReason: r.starving_reason === "out of money" || r.starving_reason === "not earning" ? r.starving_reason : null,
+      mustEarnBy: r.must_earn_by ?? null,
       deathGraceMinutes: Number(r.death_grace_minutes) || 0,
       message: String(r.message ?? ""),
     };

@@ -251,6 +251,12 @@ CREATE TABLE IF NOT EXISTS starvation (
   address  TEXT PRIMARY KEY,
   since    TEXT NOT NULL
 );
+-- When each agent's starting period began, and which "earn or die" warnings it has had.
+CREATE TABLE IF NOT EXISTS earn_clock (
+  address    TEXT PRIMARY KEY,
+  started_at TEXT NOT NULL,
+  warned     TEXT NOT NULL DEFAULT ''
+);
 CREATE TABLE IF NOT EXISTS deaths (
   address        TEXT PRIMARY KEY,
   name           TEXT,

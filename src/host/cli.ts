@@ -174,7 +174,11 @@ async function cmdServe(): Promise<void> {
   log(`containers reach it at ${containerHostUrl(config)}`);
   log(
     `economy: a child needs $${config.selection.spawnProfitUsd} of earned profit per child; ` +
-      `an agent at $0 for ${config.selection.deathGraceMinutes} min dies; Stripe ${admin.economy.stripeEnabled ? "on" : "off (set STRIPE_SECRET_KEY to turn on)"}`,
+      `an agent at $0 for ${config.selection.deathGraceMinutes} min dies; ` +
+      (config.selection.mustEarnAfterDays > 0
+        ? `after ${config.selection.mustEarnAfterDays} days an agent with no earned profit dies; `
+        : "the earn-or-die rule is off; ") +
+      `Stripe ${admin.economy.stripeEnabled ? "on" : "off (set STRIPE_SECRET_KEY to turn on)"}`,
   );
 
   const shop = await startStorefrontServer({ storefront: admin.storefront, outreach: admin.outreach, log });
@@ -364,6 +368,8 @@ function cmdFund(args: string[]): void {
   const { admin, store } = openAdmin();
   const entry = admin.fund(args[0]!, args[1]);
   console.log(`Funded ${args[0]} (${entry.address}) +${formatUsd(entry.deltaMicro)} -> balance ${formatUsd(entry.balanceAfterMicro)}`);
+  const days = admin.config.selection.mustEarnAfterDays;
+  if (days > 0) console.log(`Funding is not earnings: after its first ${days} days an agent lives only on earned profit, so this money cannot keep a non-earning agent alive.`);
   store.close();
 }
 
@@ -634,7 +640,13 @@ function cmdStandings(): void {
   const rows = admin.economy.standings();
   if (rows.length === 0) console.log("No agents have lived yet.");
   for (const s of rows) {
-    const status = s.death ? `dead (${s.death.reason})` : s.diesAt ? `starving, dies ${s.diesAt}` : "alive";
+    const status = s.death
+      ? `dead (${s.death.reason})`
+      : s.diesAt
+        ? `starving (${s.starvingReason}), dies ${s.diesAt}`
+        : s.mustEarnBy && s.profitMicro <= 0
+          ? `alive, must earn by ${s.mustEarnBy}`
+          : "alive";
     console.log(
       `${s.name.padEnd(18)} gen ${String(s.generation).padStart(2)}  children ${String(s.children).padStart(2)}  earned ${formatUsd(s.earnedMicro).padStart(10)}  spent ${formatUsd(s.spentMicro).padStart(10)}  profit ${formatUsd(s.profitMicro).padStart(10)}  ${status}`,
     );

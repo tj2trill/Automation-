@@ -99,9 +99,12 @@ export interface Standing {
   /** Earned minus spent: what the agent made on its own account. */
   profitMicro: number;
   balanceMicro: number;
-  /** Set while the balance is at or below zero. */
+  /** Set while the agent is starving: out of money, or past its starting period without earned profit. */
   starvingSince: string | null;
   diesAt: string | null;
+  starvingReason: "out of money" | "not earning" | null;
+  /** End of the starting period; from then on the agent must stay in earned profit. Null when the rule is off. */
+  mustEarnBy: string | null;
   death: null | { at: string; reason: string };
 }
 
@@ -543,33 +546,89 @@ export class Economy {
 
   // ─── Death ───────────────────────────────────────────────────
 
+  /** Start of the agent's starting period, recorded the first time the host sees it in a container. */
+  private earnClock(address: string, now: number): { startedAt: number; warned: string } {
+    this.store.db
+      .prepare("INSERT OR IGNORE INTO earn_clock (address, started_at) VALUES (?, ?)")
+      .run(address, new Date(now).toISOString());
+    const row = this.store.db.prepare("SELECT started_at, warned FROM earn_clock WHERE address = ?").get(address) as { started_at: string; warned: string };
+    return { startedAt: new Date(row.started_at).getTime(), warned: row.warned };
+  }
+
+  private get earnPeriodMs(): number {
+    return this.config.selection.mustEarnAfterDays * 86_400_000;
+  }
+
   /**
-   * Remove agents that have been out of money for the whole grace period.
+   * Remove agents that have been starving for the whole grace period.
+   * An agent starves when its balance is at or below zero, or when its
+   * starting period is over and it has not earned more than it has cost.
+   * Funding and transfers raise the balance but never count as earnings,
+   * so after the starting period only earning keeps an agent alive.
    * Returns the addresses that died on this pass.
    */
   async reap(now = Date.now()): Promise<string[]> {
     const graceMs = this.config.selection.deathGraceMinutes * 60_000;
+    const earnMs = this.earnPeriodMs;
     const died: string[] = [];
     const sandboxes = this.store.listSandboxes();
     for (const a of this.store.listAccounts()) {
       if (a.removed || a.address === this.creator) continue;
       // Only agents (accounts living in a container) can starve.
       if (!sandboxes.some((s) => s.occupant === a.address)) continue;
+      const clock = this.earnClock(a.address, now);
+      const fit = this.store.getFitness(a.address);
+      const profit = fit.earnedMicro - fit.spentMicro;
+      const deadline = clock.startedAt + earnMs;
+      // A frozen agent cannot act, so the creator's freeze also pauses this rule.
+      const judged = earnMs > 0 && !this.store.isFrozen(a.address);
+      const broke = a.balanceMicro <= 0;
+      const notEarning = judged && now >= deadline && profit <= 0;
+      if (judged && !notEarning && profit <= 0) this.warnUnearned(a.address, clock, deadline, now);
+
       const row = this.store.db.prepare("SELECT since FROM starvation WHERE address = ?").get(a.address) as { since: string } | undefined;
-      if (a.balanceMicro > 0) {
+      if (!broke && !notEarning) {
         if (row) this.store.db.prepare("DELETE FROM starvation WHERE address = ?").run(a.address);
         continue;
       }
       if (!row) {
         this.store.db.prepare("INSERT INTO starvation (address, since) VALUES (?, ?)").run(a.address, new Date(now).toISOString());
+        if (!broke && graceMs > 0) {
+          this.store.notify(
+            a.address,
+            `Your starting period is over and you have not earned more than you cost (earned profit ${formatUsd(profit)}). ` +
+              `You will be deleted permanently at ${new Date(now + graceMs).toISOString()} unless a payment for your work arrives first. ` +
+              `Funding and transfers cannot save you.`,
+          );
+        }
         if (graceMs > 0) continue;
       }
       const since = row ? new Date(row.since).getTime() : now;
       if (now - since < graceMs) continue;
-      await this.die(a.address, "ran out of money");
+      await this.die(a.address, broke ? "ran out of money" : `did not earn its keep in ${this.config.selection.mustEarnAfterDays} days`);
       died.push(a.address);
     }
     return died;
+  }
+
+  /** Tell an agent with no earned profit, a few days and then one day ahead, when it must have earned by. */
+  private warnUnearned(address: string, clock: { warned: string }, deadline: number, now: number): void {
+    const due = [
+      { tag: "1d", before: 86_400_000 },
+      { tag: "3d", before: 3 * 86_400_000 },
+    ].filter((w) => now >= deadline - w.before);
+    if (due.length === 0 || due.every((w) => clock.warned.split(",").includes(w.tag))) return;
+    // Mark every warning now due, so a short starting period sends one message, not two.
+    const warned = [...new Set([...clock.warned.split(",").filter(Boolean), ...due.map((w) => w.tag)])].join(",");
+    this.store.db.prepare("UPDATE earn_clock SET warned = ? WHERE address = ?").run(warned, address);
+    const fit = this.store.getFitness(address);
+    const short = fit.spentMicro - fit.earnedMicro;
+    this.store.notify(
+      address,
+      `Earn or die: by ${new Date(deadline).toISOString()} you must have earned more than you have cost. ` +
+        `You need to earn more than ${formatUsd(Math.max(0, short))} by then, and more as you keep spending. ` +
+        `Funding and transfers do not count. After that date you live only on your earned profit.`,
+    );
   }
 
   /** Permanent removal. Children keep their containers and pay their own way. */
@@ -599,6 +658,7 @@ export class Economy {
     this.store.db.transaction(() => {
       this.store.setDead(address);
       this.store.db.prepare("DELETE FROM starvation WHERE address = ?").run(address);
+      this.store.db.prepare("DELETE FROM earn_clock WHERE address = ?").run(address);
       this.store.db
         .prepare(
           "INSERT OR IGNORE INTO deaths (address, name, died_at, reason, earned_micro, spent_micro, funded_micro, children) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
@@ -623,6 +683,8 @@ export class Economy {
     const sandboxes = this.store.listSandboxes({ includeDeleted: true });
     const deaths = this.store.db.prepare("SELECT * FROM deaths").all() as any[];
     const starving = this.store.db.prepare("SELECT * FROM starvation").all() as Array<{ address: string; since: string }>;
+    const clocks = this.store.db.prepare("SELECT address, started_at FROM earn_clock").all() as Array<{ address: string; started_at: string }>;
+    const earnMs = this.earnPeriodMs;
     const names = this.store.db.prepare("SELECT address, name FROM automatons").all() as Array<{ address: string; name: string | null }>;
     const out: Standing[] = [];
     for (const a of this.store.listAccounts()) {
@@ -648,6 +710,11 @@ export class Economy {
         balanceMicro: a.balanceMicro,
         starvingSince: !death && hungry ? hungry.since : null,
         diesAt: !death && hungry ? new Date(new Date(hungry.since).getTime() + graceMs).toISOString() : null,
+        starvingReason: !death && hungry ? (a.balanceMicro <= 0 ? "out of money" : "not earning") : null,
+        mustEarnBy: (() => {
+          const c = clocks.find((x) => x.address === a.address);
+          return c && earnMs > 0 ? new Date(new Date(c.started_at).getTime() + earnMs).toISOString() : null;
+        })(),
         death: death ? { at: death.died_at, reason: death.reason } : null,
       });
     }

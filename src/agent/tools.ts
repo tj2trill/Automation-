@@ -447,7 +447,7 @@ export function createBuiltinTools(sandboxId: string): AutomatonTool[] {
     {
       name: "check_fitness",
       description:
-        "See where you stand under selection: money earned from jobs and customers, your own spending, whether you have earned enough to reproduce, and whether you are starving. An agent at $0 for the grace period is deleted permanently.",
+        "See where you stand under selection: money earned from jobs and customers, your own spending, the date by which you must be living on your own earnings, whether you have earned enough to reproduce, and whether you are starving. Starving agents are deleted permanently after a short grace period.",
       category: "financial",
       riskLevel: "safe",
       parameters: { type: "object", properties: {} },
@@ -460,8 +460,24 @@ export function createBuiltinTools(sandboxId: string): AutomatonTool[] {
           `Balance: ${usd(f.balanceCents)} | children: ${f.children}`,
           f.message,
         ];
-        if (f.diesAt) lines.push(`WARNING: you are out of money. You will be deleted permanently at ${f.diesAt} unless money arrives.`);
-        else lines.push(`If your balance stays at $0 for ${f.deathGraceMinutes} minutes you are deleted permanently.`);
+        const earnedEnough = f.profitCents > 0;
+        if (f.diesAt && f.starvingReason === "not earning") {
+          lines.push(`WARNING: your starting period is over and you have not earned more than you cost. You will be deleted permanently at ${f.diesAt} unless a payment for your work arrives. Funding and transfers cannot save you.`);
+        } else if (f.diesAt) {
+          lines.push(`WARNING: you are out of money. You will be deleted permanently at ${f.diesAt} unless money arrives.`);
+        } else if (f.mustEarnBy) {
+          const over = Date.parse(f.mustEarnBy) <= Date.now();
+          lines.push(
+            over
+              ? `You live only on your earned profit now. When it reaches $0 you are deleted permanently, whatever your balance.`
+              : earnedEnough
+                ? `Starting period ends ${f.mustEarnBy}. You are in earned profit; stay there. After that date, if your earned profit falls to $0 you are deleted permanently, whatever your balance.`
+                : `EARN OR DIE: by ${f.mustEarnBy} you must have earned more than you have cost (more than ${usd(Math.max(0, -f.profitCents))} so far). Funding and transfers do not count. If you have not, you are deleted permanently.`,
+          );
+          lines.push(`Separately, if your balance stays at $0 for ${f.deathGraceMinutes} minutes you are deleted permanently.`);
+        } else {
+          lines.push(`If your balance stays at $0 for ${f.deathGraceMinutes} minutes you are deleted permanently.`);
+        }
         return lines.join("\n");
       },
     },

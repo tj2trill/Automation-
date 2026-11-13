@@ -166,6 +166,13 @@ export interface SelectionConfig {
   spawnProfitUsd: number;
   /** How long an agent may sit at a zero balance before it is removed for good. */
   deathGraceMinutes: number;
+  /**
+   * Days an agent may live on its starting money. After that it must have
+   * earned more than it has cost (earned profit above zero) or it starves,
+   * however much funding it still holds: funding buys time to start earning,
+   * not survival. 0 turns the rule off, leaving only the zero-balance rule.
+   */
+  mustEarnAfterDays: number;
 }
 
 export interface StripeConfig {
@@ -227,7 +234,7 @@ export const DEFAULT_HOST_CONFIG: HostConfig = {
   maxSandboxMemoryMb: 2048,
   maxSandboxCpus: 2,
   sandboxPidsLimit: 512,
-  selection: { spawnProfitUsd: 1, deathGraceMinutes: 60 },
+  selection: { spawnProfitUsd: 1, deathGraceMinutes: 60, mustEarnAfterDays: 14 },
   stripe: {
     apiBase: "https://api.stripe.com",
     feePercent: 2.9,
@@ -360,6 +367,9 @@ export function validateHostConfig(config: HostConfig): void {
   const sel = config.selection;
   if (!sel || !(sel.spawnProfitUsd >= 0) || !(sel.deathGraceMinutes >= 0)) {
     throw new Error("host.json: selection.spawnProfitUsd and selection.deathGraceMinutes must be non-negative numbers");
+  }
+  if (!(typeof sel.mustEarnAfterDays === "number" && sel.mustEarnAfterDays >= 0 && sel.mustEarnAfterDays <= 365)) {
+    throw new Error("host.json: selection.mustEarnAfterDays must be a number from 0 (off) to 365");
   }
   const st = config.stripe;
   if (!st || !(st.feePercent >= 0 && st.feePercent < 100) || !(st.feeFixedCents >= 0) || !(st.minAmountCents >= 50) || !(st.maxAmountCents >= st.minAmountCents)) {

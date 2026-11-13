@@ -260,6 +260,10 @@ export interface SelectionStatus {
   balanceCents: number;
   starvingSince: string | null;
   diesAt: string | null;
+  /** Why the agent is starving: no money left, or past its starting period without earned profit. */
+  starvingReason: "out of money" | "not earning" | null;
+  /** From this time on the agent must stay in earned profit to live. Null when the host does not enforce it. */
+  mustEarnBy: string | null;
   deathGraceMinutes: number;
   message: string;
 }

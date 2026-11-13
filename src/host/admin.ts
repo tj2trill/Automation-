@@ -113,6 +113,7 @@ export interface Overview {
     stripeEnabled: boolean;
     spawnProfitUsd: number;
     deathGraceMinutes: number;
+    mustEarnAfterDays: number;
     earnedMicro: number;
     openJobs: number;
     alive: number;
@@ -322,6 +323,7 @@ export class HostAdmin {
         stripeEnabled: this.economy.stripeEnabled,
         spawnProfitUsd: this.config.selection.spawnProfitUsd,
         deathGraceMinutes: this.config.selection.deathGraceMinutes,
+        mustEarnAfterDays: this.config.selection.mustEarnAfterDays,
         earnedMicro: sumKind("job_reward") + sumKind("sale") + sumKind("refund"),
         openJobs: this.economy.listJobs({ status: "open" }).length,
         alive: standings.filter((x) => x.alive).length,

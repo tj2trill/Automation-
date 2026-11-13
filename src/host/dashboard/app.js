@@ -358,11 +358,16 @@ function renderEconomy() {
   const e = state.overview.economy;
   $("selection-rules").textContent = "Each child needs " + usd(e.spawnProfitUsd * 1e6, 2) +
     " of earned profit (jobs and sales minus the agent's own spending), so a second child needs twice that. " +
-    "An agent at $0 for " + e.deathGraceMinutes + " minutes is deleted for good. Alive: " + e.alive + ". Dead: " + e.dead + ".";
+    "An agent at $0 for " + e.deathGraceMinutes + " minutes is deleted for good. " +
+    (e.mustEarnAfterDays > 0
+      ? "After its first " + e.mustEarnAfterDays + " days an agent lives only on earned profit: once that is $0 or less it is deleted, whatever its balance. Funding buys time, not survival. "
+      : "") +
+    "Alive: " + e.alive + ". Dead: " + e.dead + ".";
   $("standings").tBodies[0].replaceChildren(...e.standings.map((s) => el("tr", { class: s.alive ? "" : "is-dead" },
     el("td", { text: s.name }),
     el("td", { text: s.death ? "Dead since " + timeOf(s.death.at) + " (" + s.death.reason + ")"
-      : s.diesAt ? "Starving: dies " + timeOf(s.diesAt) : "Alive" }),
+      : s.diesAt ? (s.starvingReason === "not earning" ? "Not earning: dies " : "Out of money: dies ") + timeOf(s.diesAt)
+      : s.mustEarnBy && s.profitMicro <= 0 ? "Must earn by " + timeOf(s.mustEarnBy) : "Alive" }),
     el("td", { class: "num", text: String(s.generation) }),
     el("td", { class: "num", text: String(s.children) }),
     el("td", { class: "num pos", text: usd(s.earnedMicro) }),

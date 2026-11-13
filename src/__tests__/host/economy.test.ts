@@ -10,7 +10,7 @@ import { HostAdmin } from "../../host/admin.js";
 import { DEFAULT_HOST_CONFIG } from "../../host/config.js";
 import { Economy, formEncode, type FetchLike } from "../../host/economy.js";
 import { claimOccupancy, createSandbox } from "../../host/server.js";
-import { AccountDeadError, MICRO_PER_USD } from "../../host/store.js";
+import { AccountDeadError, HOST_NOTICE_SENDER, MICRO_PER_USD } from "../../host/store.js";
 import { syncIncome, summariseIncome } from "../../memory/outcomes.js";
 import { createTestDb } from "../mocks.js";
 import { call, signIn, startTestHost, type TestHost } from "./helpers.js";
@@ -328,6 +328,150 @@ describe("economy: death", () => {
     } finally {
       await t.close();
     }
+  });
+});
+
+describe("economy: earn or die", () => {
+  const DAY = 86_400_000;
+  let h: TestHost;
+  beforeEach(async () => {
+    h = await startTestHost({ selection: { spawnProfitUsd: 1, deathGraceMinutes: 60, mustEarnAfterDays: 14 } });
+  });
+  afterEach(async () => h.close());
+  const notices = (a: string) =>
+    (h.store.db.prepare("SELECT from_addr, content FROM messages WHERE to_addr = ? ORDER BY id").all(a) as any[])
+      .filter((m) => m.from_addr === HOST_NOTICE_SENDER)
+      .map((m) => m.content as string);
+
+  it("kills a funded agent that never earned once its starting period is over, and funding cannot save it", async () => {
+    const a = await agent(h, "idler", 50);
+    const t0 = Date.now();
+    await h.economy.reap(t0);
+    const born = h.economy.standings(t0).find((s) => s.address === a.address)!;
+    expect(Date.parse(born.mustEarnBy!)).toBe(t0 + 14 * DAY);
+    h.store.charge(a.address, usd(2), "inference");
+
+    // Alive on its starting money for the whole period.
+    expect(await h.economy.reap(t0 + 14 * DAY - 1)).toEqual([]);
+    expect(h.economy.standings().find((s) => s.address === a.address)!.starvingSince).toBeNull();
+
+    // Period over, $48 still in the bank, no earned profit: it starves.
+    expect(await h.economy.reap(t0 + 14 * DAY)).toEqual([]);
+    const st = h.economy.standings().find((s) => s.address === a.address)!;
+    expect(st.starvingReason).toBe("not earning");
+    expect(st.balanceMicro).toBe(usd(48));
+    const sel = (await call(h.url, "GET", "/v1/selection", a.apiKey)).json;
+    expect(sel).toMatchObject({ starving_reason: "not earning", must_earn_after_days: 14 });
+    expect(sel.dies_at).toBeTruthy();
+    expect(notices(a.address).at(-1)).toMatch(/deleted permanently .* Funding and transfers cannot save you/);
+
+    // More funding and a transfer change nothing.
+    h.store.topup(a.address, usd(100), "rescue");
+    const friend = await agent(h, "friend", 10);
+    h.store.transfer(friend.address, a.address, usd(5));
+    expect(await h.economy.reap(t0 + 14 * DAY + 61 * 60_000)).toContain(a.address);
+    expect(h.store.isDead(a.address)).toBe(true);
+    expect(h.economy.standings().find((s) => s.address === a.address)!.death!.reason).toBe("did not earn its keep in 14 days");
+    expect(h.store.verifyLedger()).toEqual([]);
+  });
+
+  it("lets an agent in earned profit live on it, and kills it once its costs have used the profit up", async () => {
+    const a = await agent(h, "seller", 5);
+    const t0 = Date.now();
+    await h.economy.reap(t0);
+    h.store.charge(a.address, usd(1), "inference");
+    h.store.credit(a.address, usd(3), "sale", "s1");
+    expect(await h.economy.reap(t0 + 30 * DAY)).toEqual([]);
+    expect(h.economy.standings().find((s) => s.address === a.address)!.starvingSince).toBeNull();
+
+    // Spending eats the surplus; the $5 of funding it still holds does not count.
+    h.store.charge(a.address, usd(2), "compute");
+    await h.economy.reap(t0 + 31 * DAY);
+    expect(h.economy.standings().find((s) => s.address === a.address)!.starvingReason).toBe("not earning");
+    expect(h.store.getBalanceMicro(a.address)).toBe(usd(5));
+    expect(await h.economy.reap(t0 + 31 * DAY + 60 * 60_000)).toEqual([a.address]);
+  });
+
+  it("forgives a starving agent when a sale lands within the grace period", async () => {
+    const a = await agent(h, "late", 5);
+    const t0 = Date.now();
+    await h.economy.reap(t0);
+    h.store.charge(a.address, usd(0.5), "inference");
+    await h.economy.reap(t0 + 14 * DAY);
+    expect(h.economy.standings().find((s) => s.address === a.address)!.starvingSince).not.toBeNull();
+    h.store.credit(a.address, usd(1), "sale", "s1");
+    expect(await h.economy.reap(t0 + 14 * DAY + 2 * 60 * 60_000)).toEqual([]);
+    expect(h.economy.standings().find((s) => s.address === a.address)!.starvingSince).toBeNull();
+  });
+
+  it("warns an agent with no earned profit three days and one day ahead, once each", async () => {
+    const a = await agent(h, "warned", 5);
+    const t0 = Date.now();
+    await h.economy.reap(t0);
+    expect(notices(a.address)).toEqual([]);
+    await h.economy.reap(t0 + 11 * DAY);
+    await h.economy.reap(t0 + 11 * DAY + 60_000);
+    expect(notices(a.address)).toHaveLength(1);
+    expect(notices(a.address)[0]).toMatch(/^Earn or die: by .* you must have earned more than you have cost/);
+    await h.economy.reap(t0 + 13 * DAY);
+    await h.economy.reap(t0 + 13 * DAY + 60_000);
+    expect(notices(a.address)).toHaveLength(2);
+
+    // An agent already in profit is not nagged.
+    const b = await agent(h, "earner", 5);
+    h.store.credit(b.address, usd(1), "job_reward", "j1");
+    await h.economy.reap(t0);
+    await h.economy.reap(t0 + 13 * DAY);
+    expect(notices(b.address)).toEqual([]);
+  });
+
+  it("does not judge a frozen agent, and can be turned off", async () => {
+    const a = await agent(h, "frozen", 5);
+    const t0 = Date.now();
+    await h.economy.reap(t0);
+    h.store.setFrozen(a.address, true);
+    expect(await h.economy.reap(t0 + 20 * DAY)).toEqual([]);
+    expect(h.economy.standings().find((s) => s.address === a.address)!.starvingSince).toBeNull();
+
+    const off = await startTestHost({ selection: { spawnProfitUsd: 1, deathGraceMinutes: 0, mustEarnAfterDays: 0 } });
+    try {
+      const b = await agent(off, "free", 5);
+      await off.economy.reap(t0);
+      expect(await off.economy.reap(t0 + 365 * DAY)).toEqual([]);
+      expect(off.economy.standings().find((s) => s.address === b.address)!.mustEarnBy).toBeNull();
+    } finally {
+      await off.close();
+    }
+  });
+
+  it("tells the agent, through check_fitness, the date it must earn by and why it is starving", async () => {
+    const { createBuiltinTools } = await import("../../agent/tools.js");
+    const { createConwayClient } = await import("../../conway/client.js");
+    const { trustInsecureOrigin, clearTrustedInsecureOrigins } = await import("../../conway/endpoint.js");
+    trustInsecureOrigin(h.url);
+    try {
+      const a = await agent(h, "reader", 5);
+      const conway = createConwayClient({ apiUrl: h.url, apiKey: a.apiKey, sandboxId: "" });
+      const fitness = () => new Map(createBuiltinTools("").map((t) => [t.name, t])).get("check_fitness")!.execute({}, { conway } as any);
+      const t0 = Date.now();
+      await h.economy.reap(t0);
+      h.store.charge(a.address, usd(0.25), "inference");
+      expect(await fitness()).toMatch(/EARN OR DIE: by \S+ you must have earned more than you have cost \(more than \$0\.2500 so far\)/);
+      await h.economy.reap(t0 + 14 * 86_400_000);
+      expect(await fitness()).toMatch(/WARNING: your starting period is over .* Funding and transfers cannot save you\./);
+    } finally {
+      clearTrustedInsecureOrigins();
+    }
+  });
+
+  it("starts the period when the host first sees an agent, so a child gets its own", async () => {
+    const parent = await agent(h, "parent", 5);
+    const t0 = Date.now();
+    await h.economy.reap(t0);
+    const kid = await agent(h, "kid", 1);
+    h.economy.recordLineage(kid.address, parent.address);
+    await h.economy.reap(t0 + 10 * DAY);
+    expect(Date.parse(h.economy.standings().find((s) => s.address === kid.address)!.mustEarnBy!)).toBe(t0 + 24 * DAY);
   });
 });
 

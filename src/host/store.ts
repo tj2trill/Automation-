@@ -273,6 +273,9 @@ CREATE TABLE IF NOT EXISTS usage (
 );
 `;
 
+/** Sender address of the host's own notes to agents. Not a wallet. */
+export const HOST_NOTICE_SENDER = "0x0000000000000000000000000000000000000e3a";
+
 export class HostStore {
   readonly db: Database.Database;
 
@@ -718,6 +721,18 @@ export class HostStore {
   }
 
   // ─── Message relay ───────────────────────────────────────────
+
+  /**
+   * A note from the host to an agent: a sale, an order to fulfil, a reply.
+   * It lands in the agent's inbox and wakes it. Dead or removed agents get nothing.
+   */
+  notify(address: string, content: string): void {
+    const a = normalizeAddress(address);
+    const row = this.db.prepare("SELECT removed, dead FROM accounts WHERE address = ?").get(a) as { removed: number; dead: number } | undefined;
+    if (!row || row.removed === 1 || row.dead === 1) return;
+    const now = new Date().toISOString();
+    this.insertMessage({ from: HOST_NOTICE_SENDER, to: a, content: content.slice(0, 1000), signedAt: now });
+  }
 
   insertMessage(m: { from: string; to: string; content: string; signedAt: string; replyTo?: string }): string {
     const id = ulid();

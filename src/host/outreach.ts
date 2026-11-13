@@ -37,7 +37,7 @@ import { monotonicFactory } from "ulid";
 import type { HostConfig } from "./config.js";
 import type { FetchLike } from "./economy.js";
 import type { IncomingMail, MailTransport } from "./mail.js";
-import { normalizeAddress, type HostStore } from "./store.js";
+import { HOST_NOTICE_SENDER, normalizeAddress, type HostStore } from "./store.js";
 
 const ulid = monotonicFactory();
 
@@ -139,8 +139,8 @@ const UNSUBSCRIBE_WORDS = /\b(unsubscribe|remove me|take me off|stop (emailing|s
 /** Stored in email_paused to stop every agent's email at once. */
 export const PAUSE_ALL = "0x0000000000000000000000000000000000000000";
 
-/** Sender of the host's "you have a reply" notes in an agent's message inbox. */
-export const MAIL_NOTICE_SENDER = "0x0000000000000000000000000000000000000e3a";
+/** Sender of the host's "you have a reply" notes: the host's general notice sender. */
+export const MAIL_NOTICE_SENDER = HOST_NOTICE_SENDER;
 
 export const EMAIL_RE = /^[a-z0-9.!#$%&'*+/=?^_`{|}~-]+@[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)+$/;
 
@@ -563,13 +563,8 @@ export class Outreach {
       this.store.db.prepare("UPDATE email_threads SET last_in_at = ? WHERE id = ?").run(at, t.id);
     })();
     // Wake the agent. The note names the conversation only; the stranger's text stays behind check_inbox.
-    if (!m.automatic && !this.store.isDead(t.address)) {
-      this.store.insertMessage({
-        from: MAIL_NOTICE_SENDER,
-        to: t.address,
-        content: `Email: ${t.contact} replied in conversation ${t.id} ("${t.subject.slice(0, 80)}"). Read it with check_inbox.`,
-        signedAt: at,
-      });
+    if (!m.automatic) {
+      this.store.notify(t.address, `Email: ${t.contact} replied in conversation ${t.id} ("${t.subject.slice(0, 80)}"). Read it with check_inbox.`);
     }
     return "reply";
   }

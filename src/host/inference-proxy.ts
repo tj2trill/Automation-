@@ -57,9 +57,24 @@ export function resolveModel(config: HostConfig, requested: string | undefined):
   return modelForRole(config, "primary");
 }
 
-/** tokens x (USD per million tokens) is exactly micro-dollars. */
-export function costMicro(model: HostModelConfig, inputTokens: number, outputTokens: number): number {
-  return Math.round(inputTokens * model.inputPerMillionUsd + outputTokens * model.outputPerMillionUsd);
+/** Cache prices for a model, from config or the conservative defaults. */
+export function cachePrices(model: HostModelConfig): { read: number; write: number } {
+  const input = model.inputPerMillionUsd;
+  const read = model.cacheReadPerMillionUsd ?? (model.upstream === "anthropic" ? input * 0.1 : model.upstream === "openai" ? input * 0.5 : input);
+  const write = model.cacheWritePerMillionUsd ?? (model.upstream === "anthropic" ? input * 1.25 : input);
+  return { read, write };
+}
+
+/**
+ * tokens x (USD per million tokens) is exactly micro-dollars. inputTokens is
+ * all input; the cached part of it is priced at the cache rates.
+ */
+export function costMicro(model: HostModelConfig, inputTokens: number, outputTokens: number, cache: { read?: number; write?: number } = {}): number {
+  const read = Math.max(0, Math.min(cache.read ?? 0, inputTokens));
+  const write = Math.max(0, Math.min(cache.write ?? 0, inputTokens - read));
+  const plain = inputTokens - read - write;
+  const p = cachePrices(model);
+  return Math.round(plain * model.inputPerMillionUsd + read * p.read + write * p.write + outputTokens * model.outputPerMillionUsd);
 }
 
 export function isFree(model: HostModelConfig): boolean {
@@ -186,7 +201,9 @@ export async function handleChatCompletion(params: {
 
   const inputTokens = response.usage?.promptTokens || 0;
   const outputTokens = response.usage?.completionTokens || 0;
-  const cost = costMicro(model, inputTokens, outputTokens);
+  const cacheRead = response.usage?.cacheReadTokens || 0;
+  const cacheWrite = response.usage?.cacheWriteTokens || 0;
+  const cost = costMicro(model, inputTokens, outputTokens, { read: cacheRead, write: cacheWrite });
   const usageId = store.recordUsage({
     address,
     model: model.id,
@@ -195,7 +212,8 @@ export async function handleChatCompletion(params: {
     outputTokens,
     costMicro: cost,
   });
-  store.charge(address, cost, "inference", usageId, `${model.id} ${inputTokens}in/${outputTokens}out`);
+  const cacheNote = cacheRead || cacheWrite ? ` (${cacheRead} cached${cacheWrite ? `, ${cacheWrite} cache write` : ""})` : "";
+  store.charge(address, cost, "inference", usageId, `${model.id} ${inputTokens}in/${outputTokens}out${cacheNote}`);
 
   const toolCalls = response.toolCalls && response.toolCalls.length > 0 ? response.toolCalls : undefined;
   const body = {

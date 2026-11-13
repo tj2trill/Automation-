@@ -512,6 +512,8 @@ describe("selftest", () => {
       if (u.hostname === "api.printful.example") return pf.fetchImpl(url, init);
       if (u.hostname === "hn.algolia.com") return json({ hits: [{ title: "a" }, { title: "b" }] });
       if (u.hostname === "wikimedia.org") return json({ items: [{ articles: [{ article: "X", views: 5 }] }] });
+      if (u.hostname === "nominatim.openstreetmap.org") return json([{ osm_type: "relation", osm_id: 1, display_name: "Hamilton, Ontario, Canada" }]);
+      if (u.hostname === "overpass-api.de") return json({ elements: [] });
       return json({ error: { message: "unexpected " + url } }, 500);
     };
     const chat = async (model: any) => ({ id: "x", model: model.id, message: { role: "assistant" as const, content: "ready" }, usage: { promptTokens: 12, completionTokens: 1, totalTokens: 13 }, finishReason: "stop" });

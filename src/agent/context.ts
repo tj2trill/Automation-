@@ -6,6 +6,7 @@
  * Enforces token budget to prevent context window overflow.
  */
 
+import { isIdleOnlyTool } from "./idle-only-tools.js";
 import type {
   ChatMessage,
   AgentTurn,
@@ -201,10 +202,15 @@ export function buildContextMessages(
   // Analyze the last 5 turns for repeated tool usage
   const analysisWindow = recentTurns.slice(-5);
   if (analysisWindow.length >= 3) {
+    // Only status checks count. Doing the work again and again (sending one
+    // email after another, running commands, publishing) is how an agent
+    // earns, and must not be called repetition.
     const toolFrequency: Record<string, number> = {};
+    let shortSleeps = 0;
     for (const turn of analysisWindow) {
       for (const tc of turn.toolCalls) {
-        toolFrequency[tc.name] = (toolFrequency[tc.name] || 0) + 1;
+        if (isIdleOnlyTool(tc.name)) toolFrequency[tc.name] = (toolFrequency[tc.name] || 0) + 1;
+        if (tc.name === "sleep" && Number((tc.arguments as any)?.duration_seconds) < 1800) shortSleeps++;
       }
     }
     const repeatedTools = Object.entries(toolFrequency)
@@ -217,6 +223,15 @@ export function buildContextMessages(
           `[system] WARNING: You have been calling ${repeatedTools.join(", ")} repeatedly in recent turns. ` +
           `You already have this information. Move on to BUILDING something. ` +
           `Write code, create files, set up a service. Do not check status again.`,
+      });
+    }
+    // Every wake-up is a paid turn. Waiting is fine; waking every minute to wait again is not.
+    if (shortSleeps >= 3) {
+      messages.push({
+        role: "user",
+        content:
+          `[system] You keep waking up only to sleep again, and each wake-up costs a turn. If you are waiting ` +
+          `for replies, orders or payments, sleep for hours, not minutes: messages, email replies and new orders wake you.`,
       });
     }
   }

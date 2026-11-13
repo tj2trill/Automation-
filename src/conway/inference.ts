@@ -5,6 +5,7 @@
  * The automaton pays for its own thinking through Conway credits.
  */
 
+import { SYSTEM_PROMPT_CACHE_SPLIT } from "./prompt-cache.js";
 import type {
   InferenceClient,
   ChatMessage,
@@ -238,10 +239,13 @@ async function chatViaOpenAiCompatible(params: {
   }
 
   const message = choice.message;
+  // OpenAI caches long prompt prefixes on its own; cached_tokens is part of prompt_tokens.
+  const cached = Number(data.usage?.prompt_tokens_details?.cached_tokens) || 0;
   const usage: TokenUsage = {
     promptTokens: data.usage?.prompt_tokens || 0,
     completionTokens: data.usage?.completion_tokens || 0,
     totalTokens: data.usage?.total_tokens || 0,
+    ...(cached > 0 ? { cacheReadTokens: cached } : {}),
   };
 
   const toolCalls: InferenceToolCall[] | undefined =
@@ -287,8 +291,18 @@ async function chatViaAnthropic(params: {
         : (() => { throw new Error("Cannot send empty message array to Anthropic API"); })(),
   };
 
+  // Cache the stable part of the prompt: tools, then the system prompt up to
+  // the per-turn state. Reads cost a fraction of normal input; the cache
+  // lives five minutes and is refreshed by every turn that reads it.
   if (transformed.system) {
-    body.system = transformed.system;
+    const cut = transformed.system.indexOf(SYSTEM_PROMPT_CACHE_SPLIT);
+    body.system =
+      cut > 0
+        ? [
+            { type: "text", text: transformed.system.slice(0, cut), cache_control: { type: "ephemeral" } },
+            { type: "text", text: transformed.system.slice(cut + 2) },
+          ]
+        : transformed.system;
   }
 
   if (params.temperature !== undefined) {
@@ -296,10 +310,11 @@ async function chatViaAnthropic(params: {
   }
 
   if (params.tools && params.tools.length > 0) {
-    body.tools = params.tools.map((tool) => ({
+    body.tools = params.tools.map((tool, i, all) => ({
       name: tool.function.name,
       description: tool.function.description,
       input_schema: tool.function.parameters,
+      ...(i === all.length - 1 ? { cache_control: { type: "ephemeral" } } : {}),
     }));
     body.tool_choice = { type: "auto" };
   }
@@ -346,12 +361,17 @@ async function chatViaAnthropic(params: {
     throw new Error("No completion content returned from anthropic inference");
   }
 
-  const promptTokens = data.usage?.input_tokens || 0;
+  // input_tokens excludes cached tokens; count them in so promptTokens is all input.
+  const cacheRead = Number(data.usage?.cache_read_input_tokens) || 0;
+  const cacheWrite = Number(data.usage?.cache_creation_input_tokens) || 0;
+  const promptTokens = (data.usage?.input_tokens || 0) + cacheRead + cacheWrite;
   const completionTokens = data.usage?.output_tokens || 0;
   const usage: TokenUsage = {
     promptTokens,
     completionTokens,
     totalTokens: promptTokens + completionTokens,
+    ...(cacheRead ? { cacheReadTokens: cacheRead } : {}),
+    ...(cacheWrite ? { cacheWriteTokens: cacheWrite } : {}),
   };
 
   return {

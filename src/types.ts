@@ -265,9 +265,14 @@ export interface SelectionStatus {
 }
 
 export interface TokenUsage {
+  /** All input tokens, including any read from or written to a prompt cache. */
   promptTokens: number;
   completionTokens: number;
   totalTokens: number;
+  /** Input tokens served from the provider's prompt cache (billed at a discount). */
+  cacheReadTokens?: number;
+  /** Input tokens written to the provider's prompt cache (Anthropic bills these at a premium). */
+  cacheWriteTokens?: number;
 }
 
 // ─── Tool System ─────────────────────────────────────────────────

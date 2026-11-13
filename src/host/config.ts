@@ -30,6 +30,14 @@ export interface HostModelConfig {
   /** Price charged to the agent's ledger, USD per million tokens. */
   inputPerMillionUsd: number;
   outputPerMillionUsd: number;
+  /**
+   * Prompt-cache prices, USD per million tokens. Defaults never charge less
+   * than the provider does: Anthropic reads 0.1x input and 5-minute writes
+   * 1.25x; OpenAI cached input 0.5x. Newer models discount more; set these
+   * from your provider's price list to pass the saving on to agents.
+   */
+  cacheReadPerMillionUsd?: number;
+  cacheWritePerMillionUsd?: number;
   roles?: ModelRole[];
   contextWindow?: number;
   maxTokens?: number;
@@ -111,6 +119,15 @@ export interface ResearchConfig {
   cacheMinutes: number;
   hackernewsBase: string;
   wikimediaBase: string;
+  /** OpenStreetMap's Overpass API, for finding local businesses. */
+  overpassBase: string;
+  /** OpenStreetMap's Nominatim geocoder, to turn a place name into an area. */
+  nominatimBase: string;
+  /**
+   * Business lookups for the whole host per day. Overpass asks regular
+   * automated users to stay near 100 queries a day.
+   */
+  businessLookupsPerDay: number;
 }
 
 export type { PrintfulConfig, PrintfulProduct } from "./printful.js";
@@ -266,6 +283,9 @@ export const DEFAULT_HOST_CONFIG: HostConfig = {
     cacheMinutes: 360,
     hackernewsBase: "https://hn.algolia.com",
     wikimediaBase: "https://wikimedia.org",
+    overpassBase: "https://overpass-api.de/api/interpreter",
+    nominatimBase: "https://nominatim.openstreetmap.org",
+    businessLookupsPerDay: 80,
   },
   printful: {
     apiBase: "https://api.printful.com",
@@ -331,6 +351,11 @@ export function validateHostConfig(config: HostConfig): void {
         throw new Error(`host.json: model ${m.id} needs a non-negative ${k}`);
       }
     }
+    for (const k of ["cacheReadPerMillionUsd", "cacheWritePerMillionUsd"] as const) {
+      if (m[k] !== undefined && !(typeof m[k] === "number" && Number.isFinite(m[k]) && m[k]! >= 0)) {
+        throw new Error(`host.json: model ${m.id} ${k} must be a non-negative number`);
+      }
+    }
   }
   const sel = config.selection;
   if (!sel || !(sel.spawnProfitUsd >= 0) || !(sel.deathGraceMinutes >= 0)) {
@@ -383,7 +408,8 @@ export function validateHostConfig(config: HostConfig): void {
   }
   const rs = config.research;
   if (!rs || !(rs.perAgentPerHour >= 0) || !(rs.cacheMinutes >= 0)) throw new Error("host.json: research.perAgentPerHour and research.cacheMinutes must be non-negative numbers");
-  for (const k of ["hackernewsBase", "wikimediaBase"] as const) {
+  if (!(Number.isInteger(rs.businessLookupsPerDay) && rs.businessLookupsPerDay >= 0)) throw new Error("host.json: research.businessLookupsPerDay must be a whole number");
+  for (const k of ["hackernewsBase", "wikimediaBase", "overpassBase", "nominatimBase"] as const) {
     let u: URL;
     try {
       u = new URL(rs[k]);

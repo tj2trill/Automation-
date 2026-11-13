@@ -856,6 +856,7 @@ export class Storefront {
         const claimed = this.store.db.prepare("UPDATE orders SET status = 'paid', net_micro = ?, paid_at = ? WHERE id = ? AND status = 'pending'").run(net, now.toISOString(), order.id).changes;
         if (claimed !== 1) return;
         if (!this.credit(order, net, order.id, `store: ${order.title}`)) this.store.db.prepare("UPDATE orders SET status = 'paid_after_death' WHERE id = ?").run(order.id);
+        else this.store.notify(order.address, `Sale: "${order.title}" sold for $${(total / 100).toFixed(2)}; $${(net / 1_000_000).toFixed(2)} credited to you.`);
       })();
       return;
     }
@@ -863,8 +864,12 @@ export class Storefront {
     if (order.kind === "service") {
       // Paid on delivery, not now: the money waits with the creator until the work arrives.
       const due = new Date(now.getTime() + (l?.deliveryHours ?? 24) * 3_600_000).toISOString();
-      this.store.db.prepare("UPDATE orders SET status = 'awaiting_delivery', net_micro = ?, paid_at = ?, due_at = ? WHERE id = ? AND status = 'pending'").run(net, now.toISOString(), due, order.id);
+      const claimed = this.store.db.prepare("UPDATE orders SET status = 'awaiting_delivery', net_micro = ?, paid_at = ?, due_at = ? WHERE id = ? AND status = 'pending'").run(net, now.toISOString(), due, order.id).changes;
       if (this.store.isDead(order.address)) await this.refundUndelivered(this.getOrder(order.id)!, "the seller closed before delivering");
+      // The deadline runs from now; an agent asleep for hours would miss it.
+      else if (claimed === 1) {
+        this.store.notify(order.address, `New paid order ${order.id}: "${order.title}". Deliver by ${due.slice(0, 16)}Z or the buyer is refunded and you get nothing ($${(net / 1_000_000).toFixed(2)} on delivery). See list_store_orders, then deliver_order.`);
+      }
       return;
     }
 
@@ -875,7 +880,10 @@ export class Storefront {
         .run(now.toISOString(), subId ?? null, order.id).changes;
       if (claimed === 1) {
         if (this.store.isDead(order.address)) await this.cancelSubscription(this.getOrder(order.id)!, true);
-        else await this.syncSubscription(this.getOrder(order.id)!);
+        else {
+          await this.syncSubscription(this.getOrder(order.id)!);
+          this.store.notify(order.address, `New subscriber to "${order.title}". They get every file you publish_drop while they pay.`);
+        }
       }
       return;
     }
@@ -902,6 +910,8 @@ export class Storefront {
       this.store.db.prepare("UPDATE orders SET printful_order_id = ?, cost_micro = ?, note = ? WHERE id = ?").run(pf.id, cost, `Printful order ${pf.id} (${pf.status})`, order.id);
       if (!this.credit(fresh, agentShare, order.id, `print: ${order.title}`)) {
         this.store.db.prepare("UPDATE orders SET note = ? WHERE id = ?").run(`Printful order ${pf.id}; paid after the agent died, money kept by the creator`, order.id);
+      } else {
+        this.store.notify(order.address, `Print sale: "${order.title}"; $${(Math.max(0, agentShare) / 1_000_000).toFixed(2)} credited after printing cost.`);
       }
     } catch (err) {
       const why = err instanceof Error ? err.message : String(err);

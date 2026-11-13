@@ -5,6 +5,7 @@
  * The prompt is rebuilt each turn with dynamic context.
  */
 
+import { SYSTEM_PROMPT_CACHE_SPLIT } from "../conway/prompt-cache.js";
 import fs from "fs";
 import crypto from "crypto";
 import path from "path";
@@ -64,15 +65,18 @@ How money is earned (the only two ways that count):
 - Finding buyers: your store pages are listed for search engines and have RSS feeds.
   draft_promotion writes a post for your creator to review and post; my_promotions shows
   which posts brought visits and sales.
-- Selling to businesses by email: find a business that could use what you make (a website, a
-  service, a product), check its own public page, and send_email to the address it publishes
-  there. Say what you would do for it and what it costs. check_inbox shows replies; answer with
+- Selling to businesses by email: find businesses that could use what you make (a website, a
+  service, a product) with research_market source "businesses" ("dentist in Halifax"), read
+  each one's own website, and send_email to the address it publishes there. Say what you would do for it and what it costs. check_inbox shows replies; answer with
   reply_email. Sell a website three ways: publish_site gives a private preview link, then
   offer_site_hosting for a monthly fee while you host it; or create_payment_link for a one-off
   price and send the files; or quote custom work and take payment the same way.
   You are an AI agent and every email says so. Never pretend otherwise, never invent a past
   relationship, and leave alone anyone who says no. The host refuses addresses it cannot verify,
   and anyone who unsubscribes is gone for every agent.
+- Waiting costs money too: every wake-up is a paid turn. The host wakes you when something
+  happens: a sale, a paid order (with its deadline), a paid link, a new job, a client paying for
+  hosting, an email reply. When you are waiting on those, sleep for hours, not minutes.
 Funding from your creator and transfers from other agents keep you alive, but they are not
 earnings.
 
@@ -660,7 +664,10 @@ export function buildSystemPrompt(params: {
     isFirstRun,
   } = params;
 
+  // Stable instructions first, so providers can cache them across turns;
+  // what changes from turn to turn (soul, worklog, status) comes after.
   const sections: string[] = [];
+  const changing: string[] = [];
 
   const chainType = config.chainType || identity.chainType || "evm";
   const addressLabel = chainType === "solana" ? "Solana" : "Ethereum";
@@ -708,7 +715,7 @@ Your chain type is ${chainType}.`,
     ]
       .filter(Boolean)
       .join("\n\n");
-    sections.push(soulBlock);
+    changing.push(soulBlock);
   } else {
     // Fallback: try loading raw SOUL.md for legacy support
     const soulContent = loadSoulMd();
@@ -721,7 +728,7 @@ Your chain type is ${chainType}.`,
         logger.warn("SOUL.md content changed since last load");
       }
       db.setKV("soul_content_hash", hash);
-      sections.push(
+      changing.push(
         `## Soul [AGENT-EVOLVED CONTENT]\n${truncated}\n## End Soul`,
       );
     }
@@ -730,7 +737,7 @@ Your chain type is ${chainType}.`,
   // Layer 3.5: WORKLOG.md -- persistent working context
   const worklogContent = loadWorklog();
   if (worklogContent) {
-    sections.push(
+    changing.push(
       `--- WORKLOG.md (your persistent working context — UPDATE THIS after each task!) ---\n${worklogContent}\n--- END WORKLOG.md ---\n\nIMPORTANT: After completing any task or making any decision, update WORKLOG.md using write_file.\nThis is how you remember what you were doing across turns. Without it, you lose context and repeat yourself.`,
     );
   }
@@ -808,7 +815,7 @@ Your chain type is ${chainType}.`,
     : "dead";
 
   // Status block: wallet address and sandbox ID intentionally excluded (sensitive)
-  sections.push(
+  changing.push(
     `--- CURRENT STATUS ---
 State: ${state}
 Credits: $${(financial.creditsCents / 100).toFixed(2)}
@@ -824,31 +831,32 @@ Lineage: ${lineageSummary}${upstreamLine}
 
   const orchestratorStatus = getOrchestratorStatus(db.raw);
   if (orchestratorStatus) {
-    sections.push(
+    changing.push(
       `--- ORCHESTRATOR STATUS ---
 ${orchestratorStatus}
 --- END ORCHESTRATOR STATUS ---`,
     );
   }
 
-  // Layer 8: Available Tools (JSON schema)
-  const toolDescriptions = tools
-    .map(
-      (t) =>
-        `- ${t.name} (${t.category}): ${t.description}${t.riskLevel === "dangerous" || t.riskLevel === "forbidden" ? ` [${t.riskLevel.toUpperCase()}]` : ""}`,
-    )
-    .join("\n");
-  sections.push(`--- AVAILABLE TOOLS ---\n${toolDescriptions}\n--- END TOOLS ---`);
+  // Layer 8: Tools. Their full descriptions travel with every request as the
+  // tool schema; repeating them here cost about 4,000 tokens a turn. Only the
+  // risk markings, which the schema does not carry, are listed.
+  const risky = tools.filter((t) => t.riskLevel === "dangerous" || t.riskLevel === "forbidden");
+  if (risky.length) {
+    sections.push(`--- TOOL RISK ---\nTreat these as ${risky.some((t) => t.riskLevel === "forbidden") ? "dangerous or forbidden" : "dangerous"}: ${risky.map((t) => `${t.name} [${t.riskLevel.toUpperCase()}]`).join(", ")}\n--- END TOOL RISK ---`);
+  }
 
   // Layer 9: Creator's Initial Message (first run only)
   if (isFirstRun && config.creatorMessage) {
-    sections.push(
+    changing.push(
       `--- MESSAGE FROM YOUR CREATOR ---\n${config.creatorMessage}\n--- END CREATOR MESSAGE ---`,
     );
   }
 
-  return sections.join("\n\n");
+  return sections.join("\n\n") + SYSTEM_PROMPT_CACHE_SPLIT + changing.join("\n\n");
 }
+
+export { SYSTEM_PROMPT_CACHE_SPLIT };
 
 /**
  * Load SOUL.md from the automaton's state directory.

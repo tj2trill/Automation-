@@ -24,6 +24,15 @@ default file are placeholders.** Agents are billed from these numbers, so set
 each model id and its input/output price per million tokens from your
 provider's current price list before you add real money.
 
+Cached prompt tokens are billed at their own rates. Every turn resends the
+same instructions and about 10,000 tokens of tool descriptions; the host asks
+Anthropic to cache them, and OpenAI caches long prompts on its own. Unless
+you set them, cache reads are billed at 0.1x the input price for Anthropic
+and 0.5x for OpenAI, and Anthropic cache writes at 1.25x. These defaults never
+charge an agent less than the provider charges you. Newer models discount
+cached input more; set `cacheReadPerMillionUsd` (and for Anthropic
+`cacheWritePerMillionUsd`) on a model to pass the real price on.
+
 ```bash
 export ANTHROPIC_API_KEY=...        # and/or OPENAI_API_KEY; Ollama needs no key
 node dist/host/cli.js build-image   # builds the agent image (a few minutes, once)
@@ -155,6 +164,17 @@ rules but cannot change them.
 
 Transfers between agents are not earnings. Two agents could otherwise pass
 the same dollar back and forth and both look profitable.
+
+### What an agent hears about
+
+Every turn costs money, including turns spent waking up to check whether
+anything happened. So the host tells an agent when something does: a sale, a
+paid made-to-order request (with its delivery deadline), a paid payment link,
+a new subscriber, a client paying for website hosting, an email reply, and
+every new paid job. The note lands in its message inbox and wakes it within
+about two minutes, even from a long sleep. Agents are told to sleep for hours
+when they are waiting, and the runtime reminds an agent that keeps waking
+only to go back to sleep.
 
 ### How an agent reproduces
 
@@ -297,6 +317,17 @@ Before making something, an agent can check demand with `research_market`:
   building and selling.
 - **wikipedia**: the most-read articles yesterday, or whether interest in one
   topic is rising or falling. Uses the free Wikimedia pageviews API.
+- **businesses**: local businesses to sell to, as "<kind> in <place>" ("plumber
+  in Hamilton, Ontario", or an OpenStreetMap tag like "shop=bicycle in
+  Leeds"). Lists each one's name, address, website or "none mapped", and any
+  email and phone, those without a website first. Data is from OpenStreetMap:
+  free and worldwide, mapped by volunteers, so coverage varies by place and
+  some entries are stale. Places are looked up with Nominatim (at most one
+  request a second, as its policy requires) and businesses with the Overpass
+  API, capped at 80 lookups a day for the whole host
+  (`research.businessLookupsPerDay`), since Overpass asks regular automated
+  users to stay near 100 a day. Agents still have to find the address on the
+  business's own page before emailing it.
 
 The host makes the outside calls, not the agent. Answers are cached for 6
 hours and shared between agents. Each agent gets 30 outside lookups an hour,
@@ -305,7 +336,7 @@ themselves with your contact email, as Wikimedia asks. Text from outside
 sources reaches the agent marked as untrusted.
 
 ```json
-"research": { "enabled": true, "perAgentPerHour": 30, "cacheMinutes": 360 }
+"research": { "enabled": true, "perAgentPerHour": 30, "cacheMinutes": 360, "businessLookupsPerDay": 80 }
 ```
 
 Google Trends is not a source: Google's official Trends API is still a gated
@@ -520,7 +551,8 @@ while `serve` is running:
   also checks that the agent API and dashboard are not reachable through it.
 - **printful**: the token works and every configured variant exists. It does
   not place an order, because that would cost real money.
-- **research**: the Hacker News and Wikipedia APIs answer from your machine.
+- **research**: the Hacker News, Wikipedia and OpenStreetMap (Nominatim and
+  Overpass) APIs answer from your machine.
 - **email**: logs in over SMTP and IMAP, sends one email to the mailbox itself
   and waits for it to arrive. Skipped if email is not set up.
 - **sites**: the client-site address reaches the client-site server.

@@ -283,7 +283,8 @@ export class Sites {
         this.store.db.prepare("UPDATE sites SET checked_at = ? WHERE slug = ?").run(new Date().toISOString(), r.slug);
         if (s?.status === "complete" || s?.payment_status === "paid") {
           const sub = typeof s.subscription === "string" ? s.subscription : s.subscription?.id;
-          this.store.db.prepare("UPDATE sites SET status = 'live', stripe_subscription = ?, live_since = ? WHERE slug = ? AND status = 'awaiting_payment'").run(sub ?? null, new Date().toISOString(), r.slug);
+          const went = this.store.db.prepare("UPDATE sites SET status = 'live', stripe_subscription = ?, live_since = ? WHERE slug = ? AND status = 'awaiting_payment'").run(sub ?? null, new Date().toISOString(), r.slug).changes;
+          if (went) this.store.notify(r.address, `Client paid for hosting: ${r.title} is live at ${this.base}/${r.slug}/. You are credited each month they pay.`);
           activated++;
         } else if (s?.status === "expired") {
           this.store.db.prepare("UPDATE sites SET status = 'draft', session_id = NULL WHERE slug = ?").run(r.slug);

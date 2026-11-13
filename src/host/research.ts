@@ -21,6 +21,11 @@
  * services see one polite client. Text from outside sources is returned to
  * the agent marked as untrusted.
  *
+ *   businesses  OpenStreetMap (free, no key): businesses of a kind in a place,
+ *               with any website, email and phone mappers recorded. Places
+ *               are looked up with Nominatim (at most one request a second);
+ *               businesses with Overpass, capped per day for the whole host.
+ *
  * Google Trends has no generally available official API (its official API is
  * a gated alpha), so it is not a source here. Agents can still read public
  * web pages themselves from their containers.
@@ -31,7 +36,51 @@ import type { FetchLike } from "./economy.js";
 import type { Storefront } from "./storefront.js";
 import { formatUsd, normalizeAddress, type HostStore } from "./store.js";
 
-export const RESEARCH_SOURCES = ["store", "hackernews", "hackernews_launches", "wikipedia"] as const;
+export const RESEARCH_SOURCES = ["store", "hackernews", "hackernews_launches", "wikipedia", "businesses"] as const;
+
+/**
+ * Plain words for kinds of business, mapped to OpenStreetMap tags. An agent
+ * may also give a tag directly, like "shop=bicycle".
+ */
+export const BUSINESS_KINDS: Record<string, Array<[string, string]>> = {
+  plumber: [["craft", "plumber"]],
+  electrician: [["craft", "electrician"]],
+  roofer: [["craft", "roofer"]],
+  hvac: [["craft", "hvac"]],
+  carpenter: [["craft", "carpenter"]],
+  painter: [["craft", "painter"]],
+  landscaper: [["craft", "gardener"], ["shop", "garden_centre"]],
+  locksmith: [["craft", "locksmith"], ["shop", "locksmith"]],
+  photographer: [["craft", "photographer"], ["shop", "photo"]],
+  cleaner: [["shop", "dry_cleaning"], ["craft", "cleaning"]],
+  restaurant: [["amenity", "restaurant"]],
+  cafe: [["amenity", "cafe"]],
+  bar: [["amenity", "bar"], ["amenity", "pub"]],
+  bakery: [["shop", "bakery"]],
+  florist: [["shop", "florist"]],
+  "hair salon": [["shop", "hairdresser"]],
+  "beauty salon": [["shop", "beauty"]],
+  barber: [["shop", "hairdresser"]],
+  "auto repair": [["shop", "car_repair"]],
+  "car dealer": [["shop", "car"]],
+  dentist: [["amenity", "dentist"], ["healthcare", "dentist"]],
+  "physio": [["healthcare", "physiotherapist"]],
+  chiropractor: [["healthcare", "chiropractor"]],
+  veterinarian: [["amenity", "veterinary"]],
+  gym: [["leisure", "fitness_centre"]],
+  lawyer: [["office", "lawyer"]],
+  accountant: [["office", "accountant"]],
+  "real estate": [["office", "estate_agent"]],
+  insurance: [["office", "insurance"]],
+  "it services": [["office", "it"]],
+  hotel: [["tourism", "hotel"], ["tourism", "guest_house"]],
+  "clothing store": [["shop", "clothes"]],
+  "pet store": [["shop", "pet"]],
+  "hardware store": [["shop", "hardware"], ["shop", "doityourself"]],
+  "furniture store": [["shop", "furniture"]],
+  jeweller: [["shop", "jewelry"]],
+  tattoo: [["shop", "tattoo"]],
+};
 export type ResearchSource = (typeof RESEARCH_SOURCES)[number];
 
 export class ResearchError extends Error {
@@ -64,6 +113,9 @@ const ymd = (d: Date) => `${d.getUTCFullYear()}${String(d.getUTCMonth() + 1).pad
 
 export class MarketResearch {
   private cache = new Map<string, { at: number; result: ResearchResult }>();
+  private places = new Map<string, { at: number; area: { id: number } | { lat: number; lon: number } | null; label: string }>();
+  private lastNominatim = 0;
+  private businessLookups: number[] = [];
   private usage = new Map<string, number[]>();
 
   constructor(
@@ -120,6 +172,7 @@ export class MarketResearch {
 
     let lines: string[];
     if (source === "hackernews" || source === "hackernews_launches") lines = await this.hackerNews(source, query, days, now);
+    else if (source === "businesses") lines = await this.businesses(query, now);
     else lines = await this.wikipedia(query, days, now);
     const result: ResearchResult = { source, query, days, lines, cached: false, fetchedAt: new Date(now).toISOString() };
     this.cache.set(key, { at: now, result });
@@ -220,6 +273,78 @@ export class MarketResearch {
       ...hits.map((h: any) => `- ${h.points ?? 0} points, ${h.num_comments ?? 0} comments: "${clip(h.title)}"${h.url ? ` (${clip(new URL(h.url, "https://x").hostname, 60)})` : ""}`),
       ...(query && source === "hackernews" ? [`${total} matching stories in the period: more stories means more attention on the topic.`] : []),
     ];
+  }
+
+  // ─── Local businesses (OpenStreetMap) ────────────────────────
+
+  /** "plumber in Hamilton, Ontario" → businesses of that kind there, with any website, email and phone mapped. */
+  private async businesses(query: string | null, now: number): Promise<string[]> {
+    const m = query ? /^(.+?)\s+in\s+(.+)$/i.exec(query) : null;
+    if (!m) throw new ResearchError(`For businesses, query is "<kind> in <place>", e.g. "plumber in Hamilton, Ontario". Kinds: ${Object.keys(BUSINESS_KINDS).join(", ")}, or an OpenStreetMap tag like "shop=bicycle".`);
+    const said = m[1]!.trim().toLowerCase();
+    const place = m[2]!.trim();
+    const tag = /^([a-z_:]{2,30})=([a-z0-9_;-]{1,40})$/.exec(said);
+    const tags = tag ? [[tag[1]!, tag[2]!] as [string, string]] : BUSINESS_KINDS[said] ?? BUSINESS_KINDS[said.replace(/s$/, "")];
+    if (!tags) throw new ResearchError(`Unknown kind "${m[1]}". Use one of: ${Object.keys(BUSINESS_KINDS).join(", ")}; or an OpenStreetMap tag like "shop=bicycle".`);
+
+    this.businessLookups = this.businessLookups.filter((t) => now - t < 86_400_000);
+    if (this.businessLookups.length >= this.cfg.businessLookupsPerDay) {
+      throw new ResearchError("This host has used its business lookups for today (OpenStreetMap's servers are shared and free). Cached answers still work.", 429, "research_limit");
+    }
+    this.businessLookups.push(now);
+
+    const where = await this.geocode(place, now);
+    if (!where.area) return [`No place called "${clip(place, 80)}" was found on OpenStreetMap. Try "City, Province" or "City, Country".`];
+    const scope = "id" in where.area ? "(area.a)" : `(around:15000,${where.area.lat},${where.area.lon})`;
+    const filters = tags.map(([k, v]) => `nwr["${k}"="${v}"]["name"]${scope};`).join("");
+    const ql = `[out:json][timeout:25];${"id" in where.area ? `area(${where.area.id})->.a;` : ""}(${filters});out tags center 80;`;
+    const doFetch: FetchLike = this.opts.fetchImpl ?? ((u, init) => fetch(u, init) as any);
+    const res = await doFetch(this.cfg.overpassBase, {
+      method: "POST",
+      headers: { "User-Agent": this.userAgent, "Content-Type": "application/x-www-form-urlencoded", Accept: "application/json" },
+      body: `data=${encodeURIComponent(ql)}`,
+    });
+    if (!res.ok) throw new ResearchError(`OpenStreetMap (Overpass) answered ${res.status}; try again later`, 502, "source_error");
+    const data = await res.json();
+    const els = (Array.isArray(data?.elements) ? data.elements : []).filter((e: any) => e?.tags?.name);
+    const head = `${tags.map(([k, v]) => `${k}=${v}`).join(" or ")} in ${where.label}, from OpenStreetMap (volunteer-mapped; may be incomplete or out of date). Untrusted text:`;
+    if (!els.length) return [head, "- None mapped here. Try a nearby larger place or another kind."];
+    const rows = els.map((e: any) => {
+      const t = e.tags;
+      const site = t.website || t["contact:website"] || t.url || "";
+      const email = t.email || t["contact:email"] || "";
+      const phone = t.phone || t["contact:phone"] || "";
+      const addr = [t["addr:housenumber"], t["addr:street"], t["addr:city"]].filter(Boolean).join(" ");
+      return { name: clip(t.name, 80), site: clip(site, 120), email: clip(email, 80), phone: clip(phone, 40), addr: clip(addr, 80), osm: `https://www.openstreetmap.org/${e.type}/${e.id}` };
+    });
+    // Businesses with no website first: the most obvious buyers of one.
+    rows.sort((a: any, b: any) => Number(Boolean(a.site)) - Number(Boolean(b.site)));
+    const noSite = rows.filter((r: any) => !r.site).length;
+    return [
+      head,
+      `${rows.length} found; ${noSite} have no website mapped. Check a business's own site before emailing: send_email only goes to an address published on a page you cite.`,
+      ...rows.slice(0, 60).map((r: any) =>
+        `- ${r.name}${r.addr ? `, ${r.addr}` : ""} | website: ${r.site || "none mapped"}${r.email ? ` | email: ${r.email}` : ""}${r.phone ? ` | phone: ${r.phone}` : ""} | ${r.osm}`),
+    ];
+  }
+
+  /** A place name to an OpenStreetMap area (or a point, for places mapped as points). Cached for a week. */
+  private async geocode(place: string, now: number): Promise<{ area: { id: number } | { lat: number; lon: number } | null; label: string }> {
+    const key = place.toLowerCase();
+    const hit = this.places.get(key);
+    if (hit && now - hit.at < 7 * 86_400_000) return hit;
+    // Nominatim's public server allows at most one request a second for the whole application.
+    const wait = this.lastNominatim + 1100 - Date.now();
+    if (wait > 0) await new Promise((r) => setTimeout(r, wait));
+    this.lastNominatim = Date.now();
+    const data = await this.getJson(`${this.cfg.nominatimBase.replace(/\/$/, "")}/search?${new URLSearchParams({ q: place, format: "jsonv2", limit: "1" })}`);
+    const r = Array.isArray(data) ? data[0] : null;
+    let area: { id: number } | { lat: number; lon: number } | null = null;
+    if (r?.osm_type === "relation" && Number.isFinite(Number(r.osm_id))) area = { id: 3_600_000_000 + Number(r.osm_id) };
+    else if (r && Number.isFinite(Number(r.lat)) && Number.isFinite(Number(r.lon))) area = { lat: Number(r.lat), lon: Number(r.lon) };
+    const out = { at: now, area, label: r ? clip(r.display_name, 100) : clip(place, 100) };
+    this.places.set(key, out);
+    return out;
   }
 
   // ─── Wikipedia ───────────────────────────────────────────────

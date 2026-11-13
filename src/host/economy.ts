@@ -208,6 +208,11 @@ export class Economy {
         "INSERT INTO jobs (id, title, description, reward_micro, check_cmd, max_attempts, status, created_at, deadline_at) VALUES (?, ?, ?, ?, ?, ?, 'open', ?, ?)",
       )
       .run(id, title, description, rewardMicro, check, maxAttempts, new Date().toISOString(), deadlineAt);
+    // Every living agent hears about paid work at once; the first passing answer wins.
+    for (const a of this.store.listAccounts()) {
+      if (a.removed || a.address === this.creator || this.store.isDead(a.address)) continue;
+      this.store.notify(a.address, `New paid job ${id}: "${title}", $${reward.toFixed(2)} to the first answer that passes its check. See list_jobs.`);
+    }
     return this.getJob(id)!;
   }
 
@@ -457,7 +462,10 @@ export class Economy {
             const claimed = this.store.db
               .prepare("UPDATE payments SET status = 'paid', net_micro = ?, closed_at = ? WHERE id = ? AND status = 'open'")
               .run(net, now, p.id).changes;
-            if (claimed === 1 && net > 0) this.store.credit(p.address, net, "sale", p.id, `sale: ${p.description}`);
+            if (claimed === 1 && net > 0) {
+              this.store.credit(p.address, net, "sale", p.id, `sale: ${p.description}`);
+              this.store.notify(p.address, `Payment link paid: "${p.description}"; $${(net / 1_000_000).toFixed(2)} credited to you.`);
+            }
           })();
           paid++;
         } catch (err) {

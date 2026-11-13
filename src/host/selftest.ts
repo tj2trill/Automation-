@@ -261,6 +261,21 @@ export async function runSelftest(opts: SelftestOptions): Promise<CheckResult[]>
       } catch (err) {
         add({ check: "research", name: "Wikipedia pageviews", ok: false, detail: errText(err) });
       }
+      // The business finder: one place lookup and one tiny map query.
+      try {
+        const r = await doFetch(`${rs.nominatimBase.replace(/\/$/, "")}/search?q=${encodeURIComponent("Hamilton, Ontario")}&format=jsonv2&limit=1`, { method: "GET", headers: ua });
+        const body = await r.json();
+        add({ check: "research", name: "OpenStreetMap places", ok: r.ok && Array.isArray(body) && body.length > 0, detail: r.ok ? `found ${String(body?.[0]?.display_name ?? "nothing").slice(0, 60)}` : `HTTP ${r.status}` });
+      } catch (err) {
+        add({ check: "research", name: "OpenStreetMap places", ok: false, detail: errText(err) });
+      }
+      try {
+        const r = await doFetch(rs.overpassBase, { method: "POST", headers: { ...ua, "Content-Type": "application/x-www-form-urlencoded" }, body: `data=${encodeURIComponent("[out:json][timeout:10];node(1);out ids;")}` });
+        const body = await r.json();
+        add({ check: "research", name: "OpenStreetMap businesses", ok: r.ok && Array.isArray(body?.elements), detail: r.ok ? "the map query server answers" : `HTTP ${r.status}` });
+      } catch (err) {
+        add({ check: "research", name: "OpenStreetMap businesses", ok: false, detail: errText(err) });
+      }
     }
   }
 

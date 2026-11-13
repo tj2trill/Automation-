@@ -1,0 +1,212 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="referrer" content="no-referrer">
+<meta name="theme-color" content="#17231e">
+<!-- Home Screen app on iPhone: opens full screen with its own icon and name. -->
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Automaton">
+<link rel="manifest" href="/manifest.webmanifest">
+<link rel="apple-touch-icon" href="/icon-180.png">
+<link rel="icon" type="image/png" sizes="192x192" href="/icon-192.png">
+<title>Automaton host</title>
+<link rel="stylesheet" href="/app.css">
+</head>
+<body>
+<header class="top">
+  <h1>Automaton host</h1>
+  <div class="top-actions">
+    <span id="updated" class="quiet"></span>
+    <label class="check"><input type="checkbox" id="auto-refresh" checked> Refresh every 10 seconds</label>
+    <button type="button" id="refresh">Refresh now</button>
+    <button type="button" id="sign-out" hidden>Sign out</button>
+    <button type="button" id="open-launch" class="primary">Launch agent</button>
+  </div>
+</header>
+
+<p id="status" class="status" role="status" aria-live="polite" hidden></p>
+
+<main id="app" hidden>
+  <section aria-labelledby="money-h">
+    <h2 id="money-h" class="visually-hidden">Money</h2>
+    <p id="money" class="money"></p>
+    <p id="audit" class="quiet"></p>
+  </section>
+
+  <section aria-labelledby="agents-h">
+    <h2 id="agents-h">Agents</h2>
+    <div id="agents"></div>
+    <p id="no-agents" class="empty" hidden>No agents yet. Launch one to give it a container, a balance and a mission.</p>
+  </section>
+
+  <section aria-labelledby="selection-h">
+    <h2 id="selection-h">Selection</h2>
+    <p id="selection-rules" class="quiet"></p>
+    <div class="table-wrap">
+      <table id="standings">
+        <thead><tr><th>Agent</th><th>Status</th><th class="num">Generation</th><th class="num">Children</th><th class="num">Earned</th><th class="num">Spent</th><th class="num">Profit</th><th class="num">Balance</th></tr></thead>
+        <tbody></tbody>
+      </table>
+    </div>
+    <p id="no-standings" class="empty" hidden>No agents have lived yet.</p>
+  </section>
+
+  <section aria-labelledby="jobs-h">
+    <div class="section-head">
+      <h2 id="jobs-h">Paid jobs</h2>
+      <button type="button" id="open-job" class="primary">Post job</button>
+    </div>
+    <p class="quiet">The first agent whose answer passes the check is paid the reward. Like funding, the reward is new money you put in, but it counts as earned, so it decides who may reproduce. Checks run in a fresh container with no network.</p>
+    <div id="jobs"></div>
+    <p id="no-jobs" class="empty" hidden>No jobs yet. A job is how an agent earns money from you.</p>
+  </section>
+
+  <section aria-labelledby="stores-h">
+    <h2 id="stores-h">Public stores</h2>
+    <p id="stores-state" class="quiet"></p>
+    <div id="stores"></div>
+    <p id="no-stores" class="empty" hidden>No agent has listed anything yet.</p>
+    <h3>Sales</h3>
+    <div class="table-wrap">
+      <table id="orders">
+        <thead><tr><th>Paid</th><th>Agent</th><th>Item</th><th class="num">Price</th><th class="num">Credited</th><th>Status</th><th></th></tr></thead>
+        <tbody></tbody>
+      </table>
+    </div>
+    <p id="no-orders" class="empty" hidden>No sales yet.</p>
+  </section>
+
+  <section aria-labelledby="payments-h">
+    <div class="section-head">
+      <h2 id="payments-h">Customer payments</h2>
+      <button type="button" id="check-payments">Check Stripe now</button>
+    </div>
+    <p id="stripe-state" class="quiet"></p>
+    <div class="table-wrap">
+      <table id="payments">
+        <thead><tr><th>Created</th><th>Agent</th><th>For</th><th class="num">Price</th><th>Status</th><th class="num">Credited</th></tr></thead>
+        <tbody></tbody>
+      </table>
+    </div>
+    <p id="no-payments" class="empty" hidden>No payment links yet. Agents create them with create_payment_link.</p>
+  </section>
+
+  <section aria-labelledby="orphans-h" id="orphans-section" hidden>
+    <h2 id="orphans-h">Containers with no agent</h2>
+    <p class="quiet">Created by an agent for a child that never started. They still take memory and are still billed to the agent that created them.</p>
+    <div id="orphans"></div>
+  </section>
+
+  <section aria-labelledby="models-h">
+    <h2 id="models-h">Models and prices</h2>
+    <div class="table-wrap">
+      <table id="models">
+        <thead><tr><th>Model</th><th>Runs on</th><th>Used when</th><th class="num">Input / M tokens</th><th class="num">Output / M tokens</th><th class="num">Calls</th><th class="num">Billed</th></tr></thead>
+        <tbody></tbody>
+      </table>
+    </div>
+  </section>
+
+  <section aria-labelledby="ledger-h">
+    <div class="section-head">
+      <h2 id="ledger-h">Ledger</h2>
+      <label>Show <select id="ledger-filter"><option value="">all accounts</option></select></label>
+    </div>
+    <div class="table-wrap">
+      <table id="ledger">
+        <thead><tr><th>Time</th><th>Account</th><th>Type</th><th class="num">Amount</th><th class="num">Balance after</th><th>Note</th></tr></thead>
+        <tbody></tbody>
+      </table>
+    </div>
+    <p id="no-ledger" class="empty" hidden>No ledger entries yet. Funding an agent creates the first one.</p>
+  </section>
+
+  <section aria-labelledby="device-h" id="device-section">
+    <h2 id="device-h">This device</h2>
+    <p id="install-hint"></p>
+    <button type="button" id="copy-token">Copy admin token</button>
+  </section>
+</main>
+
+<section id="connect" class="connect" hidden>
+  <h2>Connect to your host</h2>
+  <p id="connect-help">This page needs your admin token. Run <code>automaton-host dashboard</code> on the machine that hosts your agents and open the link it prints, or paste the token here.</p>
+  <form id="connect-form">
+    <label for="token-input">Admin token</label>
+    <input id="token-input" type="password" autocomplete="off" spellcheck="false" required>
+    <button type="submit" class="primary">Connect</button>
+  </form>
+</section>
+
+<dialog id="launch-dialog" aria-labelledby="launch-h">
+  <form id="launch-form" method="dialog">
+    <h2 id="launch-h">Launch agent</h2>
+    <label for="launch-name">Name</label>
+    <input id="launch-name" name="name" required maxlength="48" pattern="[a-zA-Z0-9][a-zA-Z0-9._\-]*" autocomplete="off" spellcheck="false">
+    <p class="hint">Letters, digits, dot, dash, underscore.</p>
+
+    <label for="launch-genesis">Mission</label>
+    <textarea id="launch-genesis" name="genesis" rows="5" required placeholder="What this agent exists to do. It reads this first, every time it wakes."></textarea>
+
+    <div class="pair">
+      <div>
+        <label for="launch-fund">Starting funds, USD</label>
+        <input id="launch-fund" name="fund" type="number" min="0" step="0.01" value="5" inputmode="decimal">
+      </div>
+      <div>
+        <label for="launch-memory">Memory</label>
+        <select id="launch-memory" name="memory">
+          <option value="512">512 MB</option>
+          <option value="1024" selected>1 GB</option>
+          <option value="2048">2 GB</option>
+        </select>
+      </div>
+    </div>
+    <p id="launch-error" class="error" role="alert" hidden></p>
+    <div class="dialog-actions">
+      <button type="button" id="launch-cancel">Cancel</button>
+      <button type="submit" id="launch-submit" class="primary">Launch agent</button>
+    </div>
+  </form>
+</dialog>
+
+<dialog id="job-dialog" aria-labelledby="job-h">
+  <form id="job-form" method="dialog">
+    <h2 id="job-h">Post a paid job</h2>
+    <label for="job-title">Title</label>
+    <input id="job-title" required maxlength="120" autocomplete="off">
+
+    <label for="job-description">What you want</label>
+    <textarea id="job-description" rows="5" required maxlength="8000" placeholder="Agents read this. Say exactly what the answer file must contain."></textarea>
+
+    <label for="job-check">Check command</label>
+    <input id="job-check" required maxlength="2000" autocomplete="off" spellcheck="false" placeholder="grep -qx 'expected' answer.txt">
+    <p class="hint">Runs in /submission with the answer in answer.txt. Exit code 0 means the answer is paid. Agents can read this command.</p>
+
+    <div class="pair">
+      <div>
+        <label for="job-reward">Reward, USD</label>
+        <input id="job-reward" type="number" min="0.01" step="0.01" value="1" required inputmode="decimal">
+      </div>
+      <div>
+        <label for="job-attempts">Attempts per agent</label>
+        <input id="job-attempts" type="number" min="1" max="20" step="1" value="3" inputmode="numeric">
+      </div>
+    </div>
+    <label for="job-deadline">Deadline, hours (optional)</label>
+    <input id="job-deadline" type="number" min="0.1" step="0.1" inputmode="decimal">
+    <p id="job-error" class="error" role="alert" hidden></p>
+    <div class="dialog-actions">
+      <button type="button" id="job-cancel">Cancel</button>
+      <button type="submit" id="job-submit" class="primary">Post job</button>
+    </div>
+  </form>
+</dialog>
+
+<script src="/app.js"></script>
+</body>
+</html>

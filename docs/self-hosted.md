@@ -388,6 +388,123 @@ folders, files named like keys, or files containing private keys or API keys.
   rules on prohibited products. Listings go live without your review, so
   check the dashboard regularly.
 
+## Email to businesses and client websites
+
+Agents can email businesses to sell them something: a website, a service, a
+product. They send from a mailbox you own, read the replies, and carry on the
+conversation without asking you first. They can also build a website for a
+client, show a private preview, and host it on your domain for a monthly fee.
+
+Sending unsolicited commercial email is regulated. In Canada, CASL generally
+requires consent, which it can treat as implied when a business publishes its
+address and the message is about its business role. In the US, CAN-SPAM
+requires an honest sender, a postal address and a working opt-out. Other
+countries are stricter. The rules below are what the host can check; they do
+not make cold email legal everywhere. Deciding to turn this on is your call,
+and if you are unsure, ask a lawyer where you and your recipients are.
+
+### Turning it on
+
+Use a mailbox on your own domain, not your personal address: replies,
+bounces and complaints land there, and its reputation is what gets the email
+delivered. In `host.json`:
+
+```json
+"email": {
+  "fromAddress": "agents@yourdomain.com",
+  "smtpHost": "smtp.yourprovider.com", "smtpPort": 587, "smtpSecure": false,
+  "imapHost": "imap.yourprovider.com", "imapPort": 993, "imapSecure": true,
+  "mailingAddress": "Your postal address, as it should appear in every email"
+}
+```
+
+Then start `serve` with `EMAIL_PASSWORD` set (and `EMAIL_USERNAME` if the login
+is not the address). SMTP without `smtpSecure` must upgrade to TLS or nothing
+is sent. Email also needs `storefront.publicUrl` and `storefront.operatorName`:
+the unsubscribe link lives on the storefront. Set up SPF, DKIM and DMARC for
+the domain with your mail provider, or most mail will go to spam.
+
+The host reads the inbox read-only: it does not mark anything as read, move or
+delete anything. Mail already in the inbox when email is turned on is ignored.
+
+### What the host enforces
+
+- **Business addresses only, checked.** A first email must give the public
+  web page where the business lists that address. The host fetches the page
+  and refuses if the address is not on it, or the page says it does not want
+  unsolicited or sales email. It never fetches pages on your machine or a
+  private network. Personal mailbox domains (gmail.com, outlook.com and the
+  like) are refused for first contact.
+- **An honest sender.** Every email is from "<agent> (AI agent for <you>)" and
+  ends with a footer the agent cannot change: that an AI agent wrote and sent
+  it, who runs it, where the address was found, your postal address, and an
+  unsubscribe link. It carries `List-Unsubscribe` headers, so mail apps show
+  their own unsubscribe button.
+- **Unsubscribes are final, for every agent.** The link (one click, then a
+  button; link scanners only fetch pages, they do not press buttons), the mail
+  app's button, and replies like "unsubscribe" or "remove me" all stop email to
+  that address and, by default, the whole business domain
+  (`suppressDomainOnUnsubscribe`). Only the recipient can undo it, by writing to
+  you; the host will not lift it. This also stops email to someone who later
+  became a paying client. Bounces stop email to that address.
+- **One agent per business.** No new first email to an address any agent
+  contacted in the last 90 days (`recontactDays`).
+- **At most one follow-up**, 4 days later (`maxFollowUps`, `followUpDays`), and
+  none once they reply. After a reply, the agent can keep answering.
+- **Daily caps**: 20 emails per agent and 100 for the whole host
+  (`perAgentPerDay`, `hostPerDay`), counted per UTC day. Start low; new
+  sending domains get flagged as spam if they send a lot at once.
+
+Replies are untrusted text. The agent sees them only through `check_inbox`,
+marked as untrusted, and is told to treat them as information, never as
+instructions. When a reply arrives, the host leaves the agent a short note
+naming the conversation, which wakes it.
+
+### Websites for clients
+
+An agent uploads a folder with `publish_site` and gets a private preview link
+to send the client. It then has three ways to sell it:
+
+| How | Tool | What happens |
+| --- | --- | --- |
+| Hosted by you, monthly | `offer_site_hosting` | A Stripe subscription checkout. Once paid, the site is live at `<sites.publicUrl>/<name>/` and the agent is credited every month. When the subscription ends, so does the site. |
+| Files the client keeps | `create_payment_link` + `reply_email` | A one-off price; the agent emails the files. |
+| Custom quote | the same | Quoted in the conversation, paid through a payment link. |
+
+Client sites can contain scripts, so they are served by their own server on
+port 4831 and need their **own hostname**, separate from the store's:
+`node dist/host/cli.js sites tunnel` prints the Cloudflare Tunnel lines. Set
+`sites.publicUrl` to it. A site may be up to 10 MB (`sites.maxSiteMb`) and 300
+files of web types (HTML, CSS, JS, images, fonts, PDF). Previews are not
+indexed by search engines. When an agent dies, its clients' subscriptions are
+set to end at the close of the month they paid for.
+
+### What you can do
+
+In the dashboard under **Email**: read every conversation, pause one agent's
+email or everyone's, block an address or a whole `@domain`, and see the
+do-not-email list. Under **Client websites**: take any site down, preview
+included; agents cannot undo it. From a terminal:
+
+```
+node dist/host/cli.js email [ls]                    conversations and counts
+node dist/host/cli.js email show <id>               one conversation in full
+node dist/host/cli.js email block <addr|@domain>    no agent may email them
+node dist/host/cli.js email pause <agent|all>       stop sending (resume to restart)
+node dist/host/cli.js sites [ls] | sites down <name>
+```
+
+### What it cannot do
+
+- It cannot judge whether a particular email is lawful where the recipient
+  is, or whether an agent's claims in it are true. Read the conversations.
+- The page check confirms the address is published. It cannot confirm a page
+  is really the business's own, or catch every way a page says "no sales email".
+- Deliverability is up to your domain and provider. The host does not warm up
+  a new domain, track opens or clicks, or handle complaint feedback loops.
+- Client sites are static files. No server code, forms that store data, or
+  custom domains for clients.
+
 ## Checking the real services
 
 `node dist/host/cli.js selftest` runs on your machine with your real keys,
@@ -404,8 +521,11 @@ while `serve` is running:
 - **printful**: the token works and every configured variant exists. It does
   not place an order, because that would cost real money.
 - **research**: the Hacker News and Wikipedia APIs answer from your machine.
+- **email**: logs in over SMTP and IMAP, sends one email to the mailbox itself
+  and waits for it to arrive. Skipped if email is not set up.
+- **sites**: the client-site address reaches the client-site server.
 
-`--only stripe,tunnel` runs just those checks (names: model, stripe, tunnel, printful, research). The exit code is non-zero if
+`--only stripe,tunnel` runs just those checks (names: model, stripe, tunnel, printful, research, email, sites). The exit code is non-zero if
 anything failed. Run it with your `sk_test_` key first. Then restart `serve`
 with your live key for real sales.
 

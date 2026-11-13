@@ -27,6 +27,8 @@ import {
 import { Economy, EconomyError } from "./economy.js";
 import { StoreError, type Storefront } from "./storefront.js";
 import { ResearchError, type MarketResearch } from "./research.js";
+import { OutreachError, type Outreach, type Thread } from "./outreach.js";
+import { SiteError, type Sites, type Site } from "./sites.js";
 import {
   AccountDeadError,
   AccountFrozenError,
@@ -70,6 +72,10 @@ export interface HostServerDeps {
   /** Agents' public stores. */
   storefront?: Storefront;
   research?: MarketResearch;
+  /** Email to businesses, from the creator's mailbox. */
+  outreach?: Outreach;
+  /** Client websites. */
+  sites?: Sites;
 }
 
 interface Ctx {
@@ -854,6 +860,103 @@ route("GET", /^\/v1\/promotions$/, async (ctx) => {
   return { body: { promotions: requireStorefront(ctx).listPromotions({ address }).map(promotionJson) } };
 });
 
+// Email to businesses. Every rule is enforced in Outreach; these routes only translate.
+
+function requireOutreach(ctx: Ctx): Outreach {
+  if (!ctx.deps.outreach) throw new HttpError(501, "Email is not enabled on this host", "not_supported");
+  return ctx.deps.outreach;
+}
+
+function threadJson(t: Thread) {
+  return { id: t.id, contact: t.contact, subject: t.subject, status: t.status, followups: t.followups, created_at: t.createdAt, last_sent_at: t.lastOutAt, last_reply_at: t.lastInAt };
+}
+
+route("POST", /^\/v1\/email$/, async (ctx) => {
+  const address = requireAccount(ctx);
+  const b = ctx.body || {};
+  const r = await requireOutreach(ctx).sendFirst(address, {
+    to: b.to, businessName: b.business_name, sourceUrl: b.source_url, whyRelevant: b.why_relevant, subject: b.subject, body: b.body,
+  });
+  return { status: 201, body: { thread_id: r.threadId, sent_today: r.sentToday, left_today: r.leftToday } };
+});
+
+route("POST", /^\/v1\/email\/threads\/([0-9A-Z]{26})\/reply$/, async (ctx, [id]) => {
+  const address = requireAccount(ctx);
+  const b = ctx.body || {};
+  const attachments = Array.isArray(b.attachments) ? b.attachments.map((a: any) => ({ filename: a?.filename, contentBase64: a?.content_base64 })) : [];
+  const r = await requireOutreach(ctx).reply(address, id!, { body: b.body, attachments });
+  return { body: { follow_up: r.followUp, left_today: r.leftToday } };
+});
+
+// Replies the agent has not seen yet. Their text is written by strangers: untrusted.
+route("GET", /^\/v1\/email\/inbox$/, async (ctx) => {
+  const address = requireAccount(ctx);
+  const o = requireOutreach(ctx);
+  return {
+    body: {
+      conversations: o.inbox(address).map((t) => ({
+        ...threadJson(t),
+        new_messages: t.newMessages.map((m) => ({ at: m.at, subject: m.subject, automatic_reply: m.automatic, text: m.body.slice(0, 6000) })),
+      })),
+    },
+  };
+});
+
+route("GET", /^\/v1\/email\/threads$/, async (ctx) => {
+  const address = requireAccount(ctx);
+  const o = requireOutreach(ctx);
+  const s = o.stats(address);
+  return {
+    body: {
+      enabled: o.enabled,
+      missing: o.missing,
+      stats: { contacted: s.contacted, replied: s.replied, unsubscribed: s.unsubscribed, bounced: s.bounced, sent_today: s.sentToday, per_day: s.perDay, reply_rate: s.replyRate },
+      threads: o.threadsOf(address).map(threadJson),
+    },
+  };
+});
+
+route("GET", /^\/v1\/email\/threads\/([0-9A-Z]{26})$/, async (ctx, [id]) => {
+  const address = requireAccount(ctx);
+  const o = requireOutreach(ctx);
+  const t = o.getThread(id!);
+  if (!t || t.address !== address) throw new HttpError(404, `No conversation ${id}`, "not_found");
+  return { body: { ...threadJson(t), messages: o.messages(t.id).map((m) => ({ direction: m.direction, at: m.at, subject: m.subject, automatic_reply: m.automatic, text: m.body.slice(0, 6000) })) } };
+});
+
+// Client websites.
+
+function requireSites(ctx: Ctx): Sites {
+  if (!ctx.deps.sites) throw new HttpError(501, "Website hosting is not enabled on this host", "not_supported");
+  return ctx.deps.sites;
+}
+
+function siteJson(s: Site) {
+  return {
+    slug: s.slug, title: s.title, status: s.status, monthly_price_cents: s.priceCents, client_email: s.clientEmail, taken_down_by_creator: s.pulled,
+    files: s.files, bytes: s.bytes, preview_url: s.previewUrl, live_url: s.status === "live" && !s.pulled ? s.liveUrl : null, live_since: s.liveSince,
+  };
+}
+
+route("POST", /^\/v1\/sites$/, async (ctx) => {
+  const address = requireAccount(ctx);
+  const b = ctx.body || {};
+  return { status: 201, body: siteJson(requireSites(ctx).publish(address, { slug: b.slug, title: b.title, files: b.files })) };
+});
+
+route("GET", /^\/v1\/sites$/, async (ctx) => {
+  const address = requireAccount(ctx);
+  const s = requireSites(ctx);
+  return { body: { enabled: s.enabled, sites: s.listSites(address).map(siteJson) } };
+});
+
+route("POST", /^\/v1\/sites\/([a-z0-9-]{3,40})\/offer$/, async (ctx, [slug]) => {
+  const address = requireAccount(ctx);
+  const b = ctx.body || {};
+  const r = await requireSites(ctx).offerHosting(address, { slug, monthlyCents: b.monthly_price_cents, clientEmail: b.client_email });
+  return { body: { checkout_url: r.checkoutUrl, ...siteJson(r.site) } };
+});
+
 // ─── Server plumbing ───────────────────────────────────────────
 
 function readBody(req: http.IncomingMessage): Promise<Buffer> {
@@ -907,7 +1010,7 @@ export function createRequestHandler(deps: HostServerDeps): http.RequestListener
       const result = await match.r.handler({ req, url, body, deps }, match.m.slice(1));
       send(result.status ?? 200, result.body);
     } catch (err) {
-      if (err instanceof HttpError || err instanceof EconomyError || err instanceof StoreError || err instanceof ResearchError) {
+      if (err instanceof HttpError || err instanceof EconomyError || err instanceof StoreError || err instanceof ResearchError || err instanceof OutreachError || err instanceof SiteError) {
         send(err.status, { error: err.message, code: err.code });
         return;
       }
@@ -966,6 +1069,7 @@ export async function startHostServer(
       deps.economy
         .tick()
         .then(() => deps.storefront?.pollOrders())
+        .then(() => deps.sites?.poll())
         .catch((err) => deps.log?.(`economy tick failed: ${err instanceof Error ? err.message : String(err)}`))
         .finally(() => {
           economyBusy = false;
@@ -975,10 +1079,30 @@ export async function startHostServer(
   let economyBusy = false;
   interval.unref();
 
+  // Replies, bounces and unsubscribes from the mailbox.
+  let mailBusy = false;
+  const mailTimer = deps.outreach?.enabled
+    ? setInterval(() => {
+        if (mailBusy) return;
+        mailBusy = true;
+        deps.outreach!
+          .poll()
+          .then((c) => {
+            if (c.replies || c.bounces || c.unsubscribes) deps.log?.(`mailbox: ${c.replies} replies, ${c.bounces} bounces, ${c.unsubscribes} unsubscribes`);
+          })
+          .catch((err) => deps.log?.(`mailbox check failed: ${err instanceof Error ? err.message : String(err)}`))
+          .finally(() => {
+            mailBusy = false;
+          });
+      }, deps.config.email.pollSeconds * 1000)
+    : null;
+  mailTimer?.unref();
+
   return {
     addresses: bound,
     close: async () => {
       clearInterval(interval);
+      if (mailTimer) clearInterval(mailTimer);
       await Promise.all(servers.map((s) => new Promise<void>((r) => s.close(() => r()))));
     },
   };

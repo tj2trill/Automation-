@@ -17,6 +17,7 @@
  * Nothing here changes agents, the ledger, or stores.
  */
 
+import type { MailTransport } from "./mail.js";
 import fs from "fs";
 import path from "path";
 import { randomBytes } from "crypto";
@@ -26,8 +27,8 @@ import { costMicro, type UpstreamChat } from "./inference-proxy.js";
 import { PrintfulClient } from "./printful.js";
 import { formatUsd } from "./store.js";
 
-export type CheckName = "model" | "stripe" | "tunnel" | "printful" | "research";
-export const ALL_CHECKS: CheckName[] = ["model", "stripe", "tunnel", "printful", "research"];
+export type CheckName = "model" | "stripe" | "tunnel" | "printful" | "research" | "email" | "sites";
+export const ALL_CHECKS: CheckName[] = ["model", "stripe", "tunnel", "printful", "research", "email", "sites"];
 
 export interface CheckResult {
   check: CheckName;
@@ -47,6 +48,10 @@ export interface SelftestOptions {
   fetchImpl?: FetchLike;
   /** Wait for the tunnel answer; Cloudflare can take a few seconds to route a new tunnel. */
   tunnelTimeoutMs?: number;
+  /** The creator's mailbox; absent when EMAIL_PASSWORD is not set. */
+  mail?: MailTransport;
+  /** How long to wait for the test email to arrive back. */
+  mailTimeoutMs?: number;
 }
 
 const errText = (err: unknown) => (err instanceof Error ? err.message : String(err)).slice(0, 300);
@@ -255,6 +260,73 @@ export async function runSelftest(opts: SelftestOptions): Promise<CheckResult[]>
         add({ check: "research", name: "Wikipedia pageviews", ok: r.ok && n > 0, detail: r.ok ? `${n} top articles` : `HTTP ${r.status}` });
       } catch (err) {
         add({ check: "research", name: "Wikipedia pageviews", ok: false, detail: errText(err) });
+      }
+    }
+  }
+
+  // ─── Email ───────────────────────────────────────────────────
+  if (want.has("email")) {
+    const em = opts.config.email;
+    const missing = [
+      !em.fromAddress && "email.fromAddress",
+      !em.smtpHost && "email.smtpHost",
+      !em.imapHost && "email.imapHost",
+      em.mailingAddress.trim().length < 10 && "email.mailingAddress (your postal address; the law requires it in every email)",
+      !opts.config.storefront.operatorName.trim() && "storefront.operatorName",
+      !opts.config.storefront.publicUrl && "storefront.publicUrl (the unsubscribe link lives there)",
+      !opts.mail && "EMAIL_PASSWORD in this shell",
+    ].filter(Boolean);
+    // Email is optional: not started at all is a skip, half set up is a failure.
+    if (!em.fromAddress && !em.smtpHost && !opts.mail) skip("email", "agent email", "not set up (email.fromAddress, email.smtpHost, EMAIL_PASSWORD)");
+    else if (missing.length) add({ check: "email", name: "settings", ok: false, detail: `missing: ${missing.join(", ")}` });
+    if (opts.mail) {
+      let ok = false;
+      try {
+        add({ check: "email", name: "mailbox login", ok: true, detail: await opts.mail.verify() });
+        ok = true;
+      } catch (err) {
+        add({ check: "email", name: "mailbox login", ok: false, detail: errText(err) });
+      }
+      if (ok) {
+        // Send one email to the mailbox itself and wait to read it back over IMAP.
+        try {
+          const before = await opts.mail.fetchNew(0, null);
+          const tag = `automaton selftest ${randomBytes(6).toString("hex")}`;
+          await opts.mail.send({ from: em.fromAddress, to: em.fromAddress, subject: tag, text: "Sent by `automaton-host selftest` to check sending and receiving. Safe to delete.", messageId: `<selftest.${randomBytes(6).toString("hex")}@${em.fromAddress.split("@")[1]}>`, headers: {} });
+          const deadline = Date.now() + (opts.mailTimeoutMs ?? 90_000);
+          let found = false;
+          let after = before.lastUid;
+          while (!found && Date.now() < deadline) {
+            await new Promise((r) => setTimeout(r, 3000));
+            const r = await opts.mail.fetchNew(after, before.uidValidity);
+            after = r.lastUid;
+            found = r.messages.some((m) => m.subject === tag);
+          }
+          add({
+            check: "email",
+            name: "send and receive",
+            ok: found,
+            detail: found ? "a test email sent over SMTP arrived in the inbox over IMAP" : "the test email did not arrive within the wait; check the spam folder and the SMTP settings",
+          });
+        } catch (err) {
+          add({ check: "email", name: "send and receive", ok: false, detail: errText(err) });
+        }
+      }
+    }
+  }
+
+  // ─── Client sites ────────────────────────────────────────────
+  if (want.has("sites")) {
+    const base = opts.config.sites.publicUrl.replace(/\/$/, "");
+    if (!base) skip("sites", "client sites", "sites.publicUrl is not set");
+    else {
+      try {
+        const r = await doFetch(`${base}/selftest-${randomBytes(4).toString("hex")}/`, { method: "GET" });
+        const text = (await r.text?.()) ?? "";
+        const ours = r.status === 404 && text.includes("This site is not active");
+        add({ check: "sites", name: "public address", ok: ours, detail: ours ? `${base} reaches the client-site server` : `got HTTP ${r.status}; point a tunnel hostname at 127.0.0.1:${opts.config.sites.port}` });
+      } catch (err) {
+        add({ check: "sites", name: "public address", ok: false, detail: errText(err) });
       }
     }
   }

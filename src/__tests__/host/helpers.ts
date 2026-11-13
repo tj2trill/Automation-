@@ -3,6 +3,8 @@
  * scripted model upstream, and a running host on an ephemeral port.
  */
 
+import { Outreach, type OutreachOptions } from "../../host/outreach.js";
+import { Sites, startSitesServer } from "../../host/sites.js";
 import { privateKeyToAccount, generatePrivateKey } from "viem/accounts";
 import { SiweMessage } from "siwe";
 import type { InferenceResponse } from "../../types.js";
@@ -130,6 +132,7 @@ export function testConfig(overrides: Partial<HostConfig> = {}): HostConfig {
     port: 0,
     dashboardPort: 0,
     storefront: { ...DEFAULT_HOST_CONFIG.storefront, port: 0 },
+    sites: { ...DEFAULT_HOST_CONFIG.sites, port: 0 },
     models: [
       { id: "big-model", upstream: "openai", inputPerMillionUsd: 3, outputPerMillionUsd: 15, roles: ["primary"], maxTokens: 8192 },
       { id: "local-model", upstream: "ollama", inputPerMillionUsd: 0, outputPerMillionUsd: 0, roles: ["low_compute", "critical"], maxTokens: 2048 },
@@ -166,6 +169,58 @@ export function scriptedUpstream(): { chat: UpstreamChat; calls: UpstreamCall[];
   return { chat, calls, failing, usage };
 }
 
+/** Stripe Checkout, subscriptions, invoices and refunds, in memory. */
+export function fakeStripe() {
+  const calls: Array<{ method?: string; url: string; body?: string }> = [];
+  const sessions = new Map<string, any>();
+  const subs = new Map<string, any>();
+  const invoices: any[] = [];
+  const refunds: string[] = [];
+  let n = 0;
+  const json = (o: any, status = 200) => ({ ok: status < 400, status, json: async () => o, text: async () => JSON.stringify(o) });
+  const fetchImpl: FetchLike = async (url, init) => {
+    calls.push({ method: init?.method, url, body: init?.body });
+    const u = new URL(url);
+    const p = new URLSearchParams(init?.body);
+    if (init?.method === "POST" && u.pathname === "/v1/checkout/sessions") {
+      const id = `cs_test_${++n}`;
+      const s = { id, url: `https://checkout.stripe.com/c/pay/${id}`, status: "open", payment_status: "unpaid", payment_intent: null, subscription: null, amount_total: Number(p.get("line_items[0][price_data][unit_amount]")), params: Object.fromEntries(p) };
+      sessions.set(id, s);
+      return json(s);
+    }
+    let m = /^\/v1\/checkout\/sessions\/([^/]+)$/.exec(u.pathname);
+    if (m && sessions.has(m[1]!)) return json(sessions.get(m[1]!));
+    if (init?.method === "POST" && u.pathname === "/v1/refunds") {
+      refunds.push(p.get("payment_intent") || "");
+      return json({ id: `re_${refunds.length}`, status: "succeeded" });
+    }
+    if (u.pathname === "/v1/invoices") {
+      const sub = u.searchParams.get("subscription");
+      return json({ data: invoices.filter((i) => i.subscription === sub && i.status === "paid") });
+    }
+    m = /^\/v1\/subscriptions\/([^/]+)(\/cancel)?$/.exec(u.pathname);
+    if (m && subs.has(m[1]!)) {
+      const s = subs.get(m[1]!);
+      if (init?.method === "POST" && m[2]) s.status = "canceled";
+      else if (init?.method === "POST" && p.get("cancel_at_period_end") === "true") s.cancel_at_period_end = true;
+      return json(s);
+    }
+    return json({ error: { message: "no such thing" } }, 404);
+  };
+  const pay = (id: string, extra: Record<string, unknown> = {}) => {
+    const s = sessions.get(id);
+    Object.assign(s, { status: "complete", payment_status: "paid", payment_intent: `pi_${id}` }, extra);
+    if (s.params.mode === "subscription") {
+      const subId = `sub_${id}`;
+      s.subscription = subId;
+      subs.set(subId, { id: subId, status: "active", cancel_at_period_end: false });
+      invoices.push({ id: `in_${id}_1`, subscription: subId, status: "paid", amount_paid: s.amount_total });
+    }
+    return s;
+  };
+  return { fetchImpl, calls, sessions, subs, invoices, refunds, pay };
+}
+
 export interface TestHost {
   url: string;
   config: HostConfig;
@@ -175,6 +230,10 @@ export interface TestHost {
   economy: Economy;
   storefront: Storefront;
   research: MarketResearch;
+  outreach: Outreach;
+  sites: Sites;
+  /** Client websites, on loopback. */
+  sitesUrl: string;
   /** The public store, on loopback. */
   shopUrl: string;
   filesDir: string;
@@ -186,7 +245,7 @@ export interface TestHost {
 export async function startTestHost(
   overrides: Partial<HostConfig> = {},
   economyOptions: EconomyOptions = {},
-  storefrontOptions: { printfulToken?: string; printfulFetch?: FetchLike; researchFetch?: FetchLike } = {},
+  storefrontOptions: { printfulToken?: string; printfulFetch?: FetchLike; researchFetch?: FetchLike; mail?: OutreachOptions } = {},
 ): Promise<TestHost> {
   const config = testConfig(overrides);
   const store = new HostStore(":memory:");
@@ -195,13 +254,19 @@ export async function startTestHost(
   const logs: string[] = [];
   const economy = new Economy(config, store, driver, { log: (m) => logs.push(m), ...economyOptions });
   const filesDir = fs.mkdtempSync(path.join(os.tmpdir(), "store-files-"));
-  const { researchFetch, ...sfOpts } = storefrontOptions;
+  const { researchFetch, mail, ...sfOpts } = storefrontOptions;
   const storefront = new Storefront(config, store, economy, { filesDir, log: (m) => logs.push(m), ...sfOpts });
   const research = new MarketResearch(config, store, storefront, { fetchImpl: researchFetch, log: (m) => logs.push(m) });
   economy.deathHooks.push((a) => storefront.removeStoreOf(a));
-  const shop = await startStorefrontServer({ storefront, log: (m) => logs.push(m) });
+  const outreach = new Outreach(config, store, { log: (m) => logs.push(m), ...mail });
+  const siteFiles = fs.mkdtempSync(path.join(os.tmpdir(), "site-files-"));
+  const sites = new Sites(config, store, economy, { filesDir: siteFiles, log: (m) => logs.push(m) });
+  economy.deathHooks.push((a) => outreach.closeAgent(a));
+  economy.deathHooks.push((a) => sites.closeAgent(a));
+  const shop = await startStorefrontServer({ storefront, outreach, log: (m) => logs.push(m) });
+  const siteServer = await startSitesServer(sites);
   const running = await startHostServer(
-    { config, store, driver, upstream: upstream.chat, containerHostUrl: "http://automaton-host:4820", log: (m) => logs.push(m), economy, storefront, research },
+    { config, store, driver, upstream: upstream.chat, containerHostUrl: "http://automaton-host:4820", log: (m) => logs.push(m), economy, storefront, research, outreach, sites },
     ["127.0.0.1"],
     { billingIntervalMs: 3_600_000 },
   );
@@ -215,6 +280,9 @@ export async function startTestHost(
     economy,
     storefront,
     research,
+    outreach,
+    sites,
+    sitesUrl: `http://127.0.0.1:${siteServer.port}`,
     shopUrl: `http://127.0.0.1:${shop.port}`,
     filesDir,
     running,
@@ -222,6 +290,8 @@ export async function startTestHost(
     close: async () => {
       await running.close();
       await shop.close();
+      await siteServer.close();
+      fs.rmSync(siteFiles, { recursive: true, force: true });
       store.close();
       fs.rmSync(filesDir, { recursive: true, force: true });
     },

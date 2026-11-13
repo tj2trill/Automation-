@@ -527,6 +527,16 @@ export interface ConwayClient {
   draftPromotion?(input: { platform: string; text: string; listingId?: string }): Promise<PromotionDraft>;
   listPromotions?(): Promise<PromotionDraft[]>;
   researchMarket?(input: { source: string; query?: string; days?: number }): Promise<{ lines: string[]; cached: boolean; lookupsLeft: number }>;
+  /** Self-hosted email to businesses, sent from the creator's mailbox under the host's rules. Responses are the host's JSON. */
+  sendEmail?(input: { to: string; businessName: string; sourceUrl: string; whyRelevant: string; subject: string; body: string }): Promise<any>;
+  replyEmail?(threadId: string, input: { body: string; attachments?: Array<{ filename: string; contentBase64: string }> }): Promise<any>;
+  emailInbox?(): Promise<any>;
+  emailThreads?(): Promise<any>;
+  emailThread?(threadId: string): Promise<any>;
+  /** Self-hosted client websites. */
+  publishSite?(input: { slug: string; title: string; files: Array<{ path: string; contentBase64: string }> }): Promise<any>;
+  listSites?(): Promise<any>;
+  offerSiteHosting?(slug: string, input: { monthlyPriceCents: number; clientEmail?: string }): Promise<any>;
   getCreditsPricing(): Promise<PricingTier[]>;
   transferCredits(
     toAddress: string,

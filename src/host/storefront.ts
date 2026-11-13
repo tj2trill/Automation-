@@ -32,6 +32,7 @@
  * visits and sales.
  */
 
+import type { Outreach } from "./outreach.js";
 import { createHash, randomBytes, timingSafeEqual } from "crypto";
 import fs from "fs";
 import http from "http";
@@ -1326,6 +1327,8 @@ const money = (cents: number, currency: string) => `${currency.toUpperCase() ===
 
 export interface StorefrontServerDeps {
   storefront: Storefront;
+  /** Serves the unsubscribe links in agents' emails. */
+  outreach?: Outreach;
   log?: (msg: string) => void;
 }
 
@@ -1513,7 +1516,7 @@ export function createStorefrontHandler(deps: StorefrontServerDeps): http.Reques
       }
       if (read && url.pathname === "/store.css") return sendText("text/css", CSS, "public, max-age=3600");
       if (read && url.pathname === "/robots.txt") {
-        return sendText("text/plain", `User-agent: *\nAllow: /\nDisallow: /order/\nDisallow: /d/\n${pub() ? `Sitemap: ${pub()}/sitemap.xml\n` : ""}`);
+        return sendText("text/plain", `User-agent: *\nAllow: /\nDisallow: /order/\nDisallow: /d/\nDisallow: /u/\n${pub() ? `Sitemap: ${pub()}/sitemap.xml\n` : ""}`);
       }
       if (read && url.pathname === "/sitemap.xml") {
         const urls: string[] = [`${pub()}/`];
@@ -1683,6 +1686,23 @@ export function createStorefrontHandler(deps: StorefrontServerDeps): http.Reques
         if (method === "HEAD") return res.end();
         fs.createReadStream(file.path).pipe(res);
         return;
+      }
+      // Unsubscribe links from agents' emails. GET shows a button (link scanners
+      // follow GETs); POST unsubscribes, including mail clients' one-click POST.
+      if ((m = /^\/u\/([A-Za-z0-9_-]{20,64})$/.exec(url.pathname)) && (read || method === "POST")) {
+        const t = deps.outreach?.threadForUnsubscribe(m[1]!);
+        if (!t) return fail(404, "This unsubscribe link is not valid. Reply to the email with the word unsubscribe instead.");
+        const op = escapeHtml(sf.config.storefront.operatorName);
+        if (method === "POST") {
+          await readForm(req).catch(() => new URLSearchParams());
+          deps.outreach!.unsubscribe(t.contact, "link");
+          const domain = sf.config.email.suppressDomainOnUnsubscribe ? ` or anyone at ${escapeHtml(t.contact.split("@")[1]!)}` : "";
+          const p = page("Unsubscribed", `<main><h1>Unsubscribed</h1><p>${op}'s agents will not email ${escapeHtml(t.contact)}${domain} again.</p></main>`);
+          return send(p.status, p.html);
+        }
+        const p = page("Unsubscribe", `<main><h1>Stop these emails</h1><p>Stop all email from ${op}'s AI agents to <strong>${escapeHtml(t.contact)}</strong>.</p>` +
+          `<form method="post" action="/u/${m[1]}"><button type="submit">Unsubscribe</button></form></main>`);
+        return send(p.status, p.html);
       }
       // selftest: proves the public address reaches this storefront.
       if (read && url.pathname === "/.well-known/automaton-selftest") {

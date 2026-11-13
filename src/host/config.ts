@@ -84,7 +84,24 @@ export interface HostConfig {
   /** Print-on-demand through your own Printful account. Off unless PRINTFUL_API_TOKEN is set. */
   printful: PrintfulConfig;
   research: ResearchConfig;
+  /** Agents email businesses from your own mailbox. Off unless EMAIL_PASSWORD is set. */
+  email: EmailConfig;
+  /** Client websites agents build and you host, billed monthly. */
+  sites: SitesConfig;
 }
+
+export interface SitesConfig {
+  /** Loopback port of the client-site server; give it its own tunnel hostname. */
+  port: number;
+  /** Public origin for client sites, e.g. https://sites.example.com. Must differ from the store's. Empty = off. */
+  publicUrl: string;
+  maxSiteMb: number;
+  maxFiles: number;
+  maxSitesPerAgent: number;
+}
+
+export type { EmailConfig } from "./outreach.js";
+import type { EmailConfig } from "./outreach.js";
 
 export interface ResearchConfig {
   enabled: boolean;
@@ -219,6 +236,30 @@ export const DEFAULT_HOST_CONFIG: HostConfig = {
     maxDeliveryHours: 168,
     maxPromotionDrafts: 20,
   },
+  email: {
+    fromAddress: "",
+    smtpHost: "",
+    smtpPort: 587,
+    smtpSecure: false,
+    imapHost: "",
+    imapPort: 993,
+    imapSecure: true,
+    mailingAddress: "",
+    perAgentPerDay: 20,
+    hostPerDay: 100,
+    followUpDays: 4,
+    maxFollowUps: 1,
+    recontactDays: 90,
+    pollSeconds: 120,
+    suppressDomainOnUnsubscribe: true,
+  },
+  sites: {
+    port: 4831,
+    publicUrl: "",
+    maxSiteMb: 10,
+    maxFiles: 300,
+    maxSitesPerAgent: 20,
+  },
   research: {
     enabled: true,
     perAgentPerHour: 30,
@@ -261,6 +302,8 @@ export function loadHostConfig(): HostConfig {
     storefront: { ...DEFAULT_HOST_CONFIG.storefront, ...(raw.storefront || {}) },
     printful: { ...DEFAULT_HOST_CONFIG.printful, ...(raw.printful || {}) },
     research: { ...DEFAULT_HOST_CONFIG.research, ...(raw.research || {}) },
+    email: { ...DEFAULT_HOST_CONFIG.email, ...(raw.email || {}) },
+    sites: { ...DEFAULT_HOST_CONFIG.sites, ...(raw.sites || {}) },
   };
   validateHostConfig(merged);
   return merged;
@@ -311,6 +354,32 @@ export function validateHostConfig(config: HostConfig): void {
   }
   if (sf.port !== 0 && (sf.port === config.port || sf.port === config.dashboardPort)) {
     throw new Error("host.json: storefront.port must differ from the agent API and dashboard ports");
+  }
+  const em = config.email;
+  if (!em) throw new Error("host.json: email settings are missing");
+  for (const k of ["perAgentPerDay", "hostPerDay", "followUpDays", "maxFollowUps", "recontactDays", "pollSeconds", "smtpPort", "imapPort"] as const) {
+    if (!(Number.isFinite(em[k]) && em[k] >= 0)) throw new Error(`host.json: email.${k} must be a non-negative number`);
+  }
+  if (em.pollSeconds < 30) throw new Error("host.json: email.pollSeconds must be at least 30");
+  if (em.maxFollowUps > 3) throw new Error("host.json: email.maxFollowUps may be at most 3");
+  if (em.recontactDays < 30) throw new Error("host.json: email.recontactDays must be at least 30");
+  const sites = config.sites;
+  if (!sites || !Number.isInteger(sites.port) || sites.port < 0 || sites.port > 65535) throw new Error("host.json: sites.port must be a port number");
+  if (sites.port !== 0 && [config.port, config.dashboardPort, config.storefront.port].includes(sites.port)) throw new Error("host.json: sites.port must differ from the other ports");
+  // Uploads travel base64-encoded inside the API's 20 MB request limit.
+  if (!(sites.maxSiteMb > 0 && sites.maxSiteMb <= 14)) throw new Error("host.json: sites.maxSiteMb must be from 1 to 14");
+  if (sites.publicUrl) {
+    let u: URL;
+    try {
+      u = new URL(sites.publicUrl);
+    } catch {
+      throw new Error("host.json: sites.publicUrl is not a URL");
+    }
+    if (u.protocol !== "https:" || u.pathname !== "/" || u.search) throw new Error("host.json: sites.publicUrl must be an https origin like https://sites.example.com");
+    // Client sites may run scripts; they must never share an origin with the store.
+    if (config.storefront.publicUrl && new URL(config.storefront.publicUrl).host === u.host) {
+      throw new Error("host.json: sites.publicUrl must be a different hostname from storefront.publicUrl");
+    }
   }
   const rs = config.research;
   if (!rs || !(rs.perAgentPerHour >= 0) || !(rs.cacheMinutes >= 0)) throw new Error("host.json: research.perAgentPerHour and research.cacheMinutes must be non-negative numbers");
@@ -374,6 +443,13 @@ export function loadOrCreateAdminToken(): string {
 export interface UpstreamKeys {
   anthropicApiKey?: string;
   openaiApiKey?: string;
+}
+
+/** The mailbox login. The username defaults to email.fromAddress. */
+export function loadMailboxCredentials(config: HostConfig): { username: string; password: string } | undefined {
+  const password = process.env.EMAIL_PASSWORD;
+  if (!password) return undefined;
+  return { username: process.env.EMAIL_USERNAME?.trim() || config.email.fromAddress, password };
 }
 
 /** Print-on-demand is off unless this is set in the environment of `serve`. */

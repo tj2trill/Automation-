@@ -15,7 +15,7 @@ import { runSelftest, formatSelftest } from "../../host/selftest.js";
 import { isIdleOnlyTool } from "../../agent/idle-only-tools.js";
 import { createSandbox } from "../../host/server.js";
 import { MICRO_PER_USD } from "../../host/store.js";
-import { call, signIn, startTestHost, testConfig, type TestHost } from "./helpers.js";
+import { call, fakeStripe, signIn, startTestHost, testConfig, type TestHost } from "./helpers.js";
 
 const usd = (n: number) => Math.round(n * MICRO_PER_USD);
 const b64 = (s: string | Buffer) => Buffer.from(s).toString("base64");
@@ -32,58 +32,6 @@ function png(w: number, h: number): Buffer {
   b.writeUInt32BE(w, 16);
   b.writeUInt32BE(h, 20);
   return b;
-}
-
-/** Stripe Checkout, subscriptions, invoices and refunds, in memory. */
-function fakeStripe() {
-  const calls: Array<{ method?: string; url: string; body?: string }> = [];
-  const sessions = new Map<string, any>();
-  const subs = new Map<string, any>();
-  const invoices: any[] = [];
-  const refunds: string[] = [];
-  let n = 0;
-  const json = (o: any, status = 200) => ({ ok: status < 400, status, json: async () => o, text: async () => JSON.stringify(o) });
-  const fetchImpl: FetchLike = async (url, init) => {
-    calls.push({ method: init?.method, url, body: init?.body });
-    const u = new URL(url);
-    const p = new URLSearchParams(init?.body);
-    if (init?.method === "POST" && u.pathname === "/v1/checkout/sessions") {
-      const id = `cs_test_${++n}`;
-      const s = { id, url: `https://checkout.stripe.com/c/pay/${id}`, status: "open", payment_status: "unpaid", payment_intent: null, subscription: null, amount_total: Number(p.get("line_items[0][price_data][unit_amount]")), params: Object.fromEntries(p) };
-      sessions.set(id, s);
-      return json(s);
-    }
-    let m = /^\/v1\/checkout\/sessions\/([^/]+)$/.exec(u.pathname);
-    if (m && sessions.has(m[1]!)) return json(sessions.get(m[1]!));
-    if (init?.method === "POST" && u.pathname === "/v1/refunds") {
-      refunds.push(p.get("payment_intent") || "");
-      return json({ id: `re_${refunds.length}`, status: "succeeded" });
-    }
-    if (u.pathname === "/v1/invoices") {
-      const sub = u.searchParams.get("subscription");
-      return json({ data: invoices.filter((i) => i.subscription === sub && i.status === "paid") });
-    }
-    m = /^\/v1\/subscriptions\/([^/]+)(\/cancel)?$/.exec(u.pathname);
-    if (m && subs.has(m[1]!)) {
-      const s = subs.get(m[1]!);
-      if (init?.method === "POST" && m[2]) s.status = "canceled";
-      else if (init?.method === "POST" && p.get("cancel_at_period_end") === "true") s.cancel_at_period_end = true;
-      return json(s);
-    }
-    return json({ error: { message: "no such thing" } }, 404);
-  };
-  const pay = (id: string, extra: Record<string, unknown> = {}) => {
-    const s = sessions.get(id);
-    Object.assign(s, { status: "complete", payment_status: "paid", payment_intent: `pi_${id}` }, extra);
-    if (s.params.mode === "subscription") {
-      const subId = `sub_${id}`;
-      s.subscription = subId;
-      subs.set(subId, { id: subId, status: "active", cancel_at_period_end: false });
-      invoices.push({ id: `in_${id}_1`, subscription: subId, status: "paid", amount_paid: s.amount_total });
-    }
-    return s;
-  };
-  return { fetchImpl, calls, sessions, subs, invoices, refunds, pay };
 }
 
 function fakePrintful(fail = false) {

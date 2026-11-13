@@ -195,6 +195,29 @@ describe("Agent Loop", () => {
     expect(inboxTurn!.inputSource).toBe("social");
   });
 
+  it("shows the message that woke the agent in its first turn, even if it goes straight back to sleep", async () => {
+    db.insertInboxMessage({
+      id: "test-msg-wake",
+      from: "0x0000000000000000000000000000000000000e3a",
+      to: identity.address,
+      content: "Email: joe@example.com replied in conversation X. Read it with check_inbox.",
+      signedAt: new Date().toISOString(),
+      createdAt: new Date().toISOString(),
+    });
+    const inference = new MockInferenceClient([
+      toolCallResponse([{ name: "sleep", arguments: { duration_seconds: 60 } }]),
+    ]);
+    const turns: AgentTurn[] = [];
+    await runAgentLoop({ identity, config, db, conway, inference, onTurnComplete: (turn) => turns.push(turn) });
+    expect(turns).toHaveLength(1);
+    // The runtime's own wake-up text is still there, with the message after it.
+    expect(turns[0]!.input).toMatch(/What will you do first|You are waking up/);
+    expect(turns[0]!.input).toContain("replied in conversation X");
+    // Untrusted input arrived with it, so the turn is not the agent's own.
+    expect(turns[0]!.inputSource).toBe("social");
+    expect(inference.calls[0]!.messages.some((m: any) => String(m.content).includes("replied in conversation X"))).toBe(true);
+  });
+
   it("gives the creator's own messages creator authority, and self-directed turns the agent's", async () => {
     db.insertInboxMessage({
       id: "test-msg-creator",

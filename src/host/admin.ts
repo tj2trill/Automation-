@@ -10,6 +10,8 @@
  * never from the agent-facing API.
  */
 
+import { Outreach, OutreachError, PAUSE_ALL } from "./outreach.js";
+import { Sites, SiteError } from "./sites.js";
 import fs from "fs";
 import path from "path";
 import { generatePrivateKey, privateKeyToAccount } from "viem/accounts";
@@ -152,6 +154,8 @@ export function loadOrCreateCreatorWallet(): { address: string; isNew: boolean }
 export class HostAdmin {
   readonly economy: Economy;
   readonly storefront: Storefront;
+  readonly outreach: Outreach;
+  readonly sites: Sites;
 
   constructor(
     readonly config: HostConfig,
@@ -160,11 +164,17 @@ export class HostAdmin {
     readonly creatorAddress: string,
     economy?: Economy,
     storefront?: Storefront,
+    extras: { outreach?: Outreach; sites?: Sites } = {},
   ) {
     this.economy = economy ?? new Economy(config, store, driver, { creatorAddress });
     this.storefront = storefront ?? new Storefront(config, store, this.economy, { filesDir: path.join(getHostDir(), "store-files"), printfulToken: loadPrintfulToken() });
     // A dead agent's listings come down with it.
     this.economy.deathHooks.push((address) => this.storefront.removeStoreOf(address));
+    this.outreach = extras.outreach ?? new Outreach(config, store);
+    this.sites = extras.sites ?? new Sites(config, store, this.economy, { filesDir: path.join(getHostDir(), "site-files") });
+    // Its conversations end; its clients' sites run to the end of the month they paid for.
+    this.economy.deathHooks.push((address) => this.outreach.closeAgent(address));
+    this.economy.deathHooks.push((address) => this.sites.closeAgent(address));
   }
 
   // ─── Lookup ──────────────────────────────────────────────────
@@ -396,7 +406,7 @@ export class HostAdmin {
     try {
       return await fn();
     } catch (err) {
-      if (err instanceof StoreError || err instanceof EconomyError) throw new AdminError(err.message, err.status);
+      if (err instanceof StoreError || err instanceof EconomyError || err instanceof OutreachError || err instanceof SiteError) throw new AdminError(err.message, err.status);
       throw err;
     }
   }
@@ -419,6 +429,53 @@ export class HostAdmin {
       orders: sf.listOrders({ paidOnly: true, limit: 100 }).map((o) => ({ ...o, name: names.get(o.address) ?? o.address.slice(0, 10) })),
       promotions: sf.listPromotions().filter((p) => p.status !== "discarded").map((p) => ({ ...p, name: names.get(p.address) ?? p.address.slice(0, 10) })),
     };
+  }
+
+  // ─── Email and client sites ──────────────────────────────────
+
+  email() {
+    const o = this.outreach;
+    const names = new Map(this.store.listAccounts().map((a) => [a.address, a.label || a.address.slice(0, 10)]));
+    const agents = [...new Set(o.allThreads(1000).map((t) => t.address))];
+    return {
+      enabled: o.enabled,
+      missing: o.missing,
+      fromAddress: this.config.email.fromAddress || null,
+      paused: o.isPaused(PAUSE_ALL) ? "all" : null,
+      stats: o.stats(),
+      agents: agents.map((a) => ({ address: a, name: names.get(a) ?? a.slice(0, 10), paused: o.isPaused(a), ...o.stats(a) })),
+      threads: o.allThreads(150).map((t) => ({ ...t, name: names.get(t.address) ?? t.address.slice(0, 10) })),
+      suppressed: o.listSuppressed(),
+    };
+  }
+
+  emailThread(id: string) {
+    const t = this.outreach.getThread(id);
+    if (!t) throw new AdminError(`No conversation ${id}`, 404);
+    return { ...t, messages: this.outreach.messages(id) };
+  }
+
+  /** Block an address or a whole @domain for every agent. */
+  blockEmail(key: string) {
+    return this.storeOp(() => this.outreach.suppress(key, "blocked by creator"));
+  }
+
+  unblockEmail(key: string) {
+    return this.storeOp(() => this.outreach.unsuppress(key));
+  }
+
+  /** Stop one agent's email, or everyone's with "all". */
+  pauseEmail(ref: string, paused: boolean) {
+    return this.storeOp(() => this.outreach.setPaused(ref === "all" ? PAUSE_ALL : this.resolve(ref), paused));
+  }
+
+  clientSites() {
+    const names = new Map(this.store.listAccounts().map((a) => [a.address, a.label || a.address.slice(0, 10)]));
+    return { enabled: this.sites.enabled, publicUrl: this.config.sites.publicUrl || null, sites: this.sites.listSites().map((s) => ({ ...s, name: names.get(s.address) ?? s.address.slice(0, 10) })) };
+  }
+
+  takeDownSite(slug: string, down: boolean) {
+    return this.storeOp(() => this.sites.setPulled(slug, down));
   }
 
   setPromotionStatus(id: string, status: "posted" | "discarded" | "draft") {

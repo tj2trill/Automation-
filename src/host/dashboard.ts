@@ -222,6 +222,13 @@ const api: Array<{ method: string; pattern: RegExp; handler: ApiHandler }> = [
   { method: "POST", pattern: /^\/api\/stores\/(0x[a-fA-F0-9]{40})\/resume$/, handler: (a, [addr]) => a.suspendStore(addr!, false) },
   { method: "POST", pattern: /^\/api\/orders\/([0-9A-Z]{26})\/refund$/, handler: (a, [id]) => a.refundOrder(id!) },
   { method: "POST", pattern: /^\/api\/orders\/([0-9A-Z]{26})\/cancel-subscription$/, handler: (a, [id]) => a.cancelSubscription(id!) },
+  { method: "GET", pattern: /^\/api\/email$/, handler: (a) => a.email() },
+  { method: "GET", pattern: /^\/api\/email\/threads\/([0-9A-Z]{26})$/, handler: (a, [id]) => a.emailThread(id!) },
+  { method: "POST", pattern: /^\/api\/email\/block$/, handler: (a, _p, _q, b) => a.blockEmail(String(b?.key ?? "")) },
+  { method: "POST", pattern: /^\/api\/email\/unblock$/, handler: (a, _p, _q, b) => a.unblockEmail(String(b?.key ?? "")) },
+  { method: "POST", pattern: /^\/api\/email\/pause$/, handler: (a, _p, _q, b) => a.pauseEmail(String(b?.agent ?? ""), b?.paused === true) },
+  { method: "GET", pattern: /^\/api\/sites$/, handler: (a) => a.clientSites() },
+  { method: "POST", pattern: /^\/api\/sites\/([a-z0-9-]{3,40})\/(down|up)$/, handler: (a, [slug, d]) => a.takeDownSite(slug!, d === "down") },
   { method: "POST", pattern: /^\/api\/promotions\/([0-9A-Z]{26})\/(posted|discarded|draft)$/, handler: (a, [id, st]) => a.setPromotionStatus(id!, st as "posted" | "discarded" | "draft") },
 ];
 

@@ -87,6 +87,33 @@
     <p id="no-promotions" class="empty" hidden>No drafts. Agents write them with draft_promotion.</p>
   </section>
 
+  <section aria-labelledby="email-h">
+    <div class="section-head">
+      <h2 id="email-h">Email</h2>
+      <button type="button" id="email-pause-all">Pause all email</button>
+    </div>
+    <p id="email-state" class="quiet"></p>
+    <div id="email-agents"></div>
+    <div id="email-threads"></div>
+    <p id="no-email" class="empty" hidden>No emails yet. Agents send them with send_email.</p>
+    <form id="email-block" class="inline-form">
+      <label for="email-block-key">Never email</label>
+      <input id="email-block-key" type="text" inputmode="email" autocomplete="off" placeholder="name@business.com or @business.com" required>
+      <button type="submit">Block</button>
+    </form>
+    <details>
+      <summary>Do-not-email list (<span id="email-suppressed-count">0</span>)</summary>
+      <ul id="email-suppressed" class="plain"></ul>
+    </details>
+  </section>
+
+  <section aria-labelledby="sites-h">
+    <h2 id="sites-h">Client websites</h2>
+    <p id="sites-state" class="quiet"></p>
+    <div id="client-sites"></div>
+    <p id="no-sites" class="empty" hidden>No client sites. Agents build them with publish_site.</p>
+  </section>
+
   <section aria-labelledby="payments-h">
     <div class="section-head">
       <h2 id="payments-h">Customer payments</h2>

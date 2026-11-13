@@ -373,6 +373,8 @@ function renderEconomy() {
   $("no-standings").hidden = e.standings.length > 0;
 
   renderStores();
+  renderEmail();
+  renderSites();
   $("jobs").replaceChildren(...state.jobs.map(jobRow));
   $("no-jobs").hidden = state.jobs.length > 0;
 
@@ -466,6 +468,98 @@ function renderStores() {
            el("button", { type: "button", class: "danger", text: "Discard", data: { action: "promo-discard" }, on: { click: (e) => promotionAction(p, "discarded", e.currentTarget) } })]
         : el("button", { type: "button", text: "Back to drafts", data: { action: "promo-draft" }, on: { click: (e) => promotionAction(p, "draft", e.currentTarget) } })))));
   $("no-promotions").hidden = drafts.length > 0;
+}
+
+const THREAD_STATUS = { open: "no reply yet", replied: "replied", unsubscribed: "unsubscribed", bounced: "bounced", closed: "closed" };
+
+function renderEmail() {
+  const e = state.email;
+  if (!e) return;
+  $("email-state").textContent = e.enabled
+    ? "Agents send from " + e.fromAddress + ". Today " + e.stats.sentToday + " of " + e.stats.perDay + " sent. " +
+      e.stats.contacted + (e.stats.contacted === 1 ? " business" : " businesses") + " contacted, " + e.stats.replied + " replied, " + e.stats.unsubscribed + " unsubscribed, " + e.stats.bounced + " bounced." +
+      (e.paused ? " All email is paused." : "")
+    : "Email is off until you set: " + e.missing.join(", ") + ".";
+  const all = $("email-pause-all");
+  all.textContent = e.paused ? "Resume all email" : "Pause all email";
+  all.className = e.paused ? "" : "danger";
+  all.disabled = !e.enabled;
+  $("email-agents").replaceChildren(...e.agents.map((a) => el("div", { class: "store-head", data: { emailAgent: a.address } },
+    el("span", {}, el("strong", { text: a.name }), " ",
+      el("span", { class: "quiet", text: a.sentToday + " of " + a.perDay + " today · " + a.contacted + " contacted · " + a.replied + " replied · " + a.unsubscribed + " unsubscribed" + (a.paused ? " · paused" : "") })),
+    e.paused ? null : el("button", { type: "button", class: a.paused ? "" : "danger", text: a.paused ? "Resume" : "Pause",
+      on: { click: (ev) => pauseEmail(a.address, a.name, !a.paused, ev.currentTarget) } }))));
+  state.emailOpen = state.emailOpen || {};
+  $("email-threads").replaceChildren(...e.threads.map((t) => {
+    const open = state.emailOpen[t.id];
+    return el("div", { class: "job", data: { thread: t.id } },
+      el("div", { class: "job-main" },
+        el("strong", { text: t.subject }),
+        el("p", { class: "quiet", text: t.name + " → " + t.contact + " · " + (THREAD_STATUS[t.status] || t.status) + " · " + timeOf(t.lastInAt || t.lastOutAt || t.createdAt) }),
+        open ? el("div", { class: "thread" }, ...open.messages.map((m) => el("div", { class: "msg " + m.direction },
+          el("p", { class: "quiet", text: (m.direction === "out" ? t.name : m.automatic ? "Automatic reply" : t.contact) + " · " + timeOf(m.at) }),
+          el("p", { class: "desc", text: m.body })))) : null),
+      el("span", { class: "detail-actions" },
+        el("button", { type: "button", text: open ? "Hide" : "Read", on: { click: (ev) => toggleThread(t, ev.currentTarget) } }),
+        ["unsubscribed", "bounced", "closed"].includes(t.status) ? null
+          : el("button", { type: "button", class: "danger", text: "Block", on: { click: (ev) => blockEmail(t.contact, ev.currentTarget) } })));
+  }));
+  $("no-email").hidden = e.threads.length > 0;
+  $("email-suppressed-count").textContent = String(e.suppressed.length);
+  $("email-suppressed").replaceChildren(...e.suppressed.map((x) => el("li", {},
+    el("span", { class: "mono", text: x.key }), " ", el("span", { class: "quiet", text: x.reason + " · " + timeOf(x.at) }), " ",
+    x.reason.startsWith("unsubscribed") ? null : el("button", { type: "button", text: "Unblock", on: { click: (ev) => unblockEmail(x.key, ev.currentTarget) } }))));
+}
+
+async function toggleThread(t, button) {
+  if (state.emailOpen[t.id]) {
+    delete state.emailOpen[t.id];
+    render();
+    return;
+  }
+  button.disabled = true;
+  try {
+    state.emailOpen[t.id] = await api("GET", "/api/email/threads/" + t.id);
+    render();
+  } catch (err) {
+    say("Could not open that conversation: " + err.message);
+  } finally {
+    button.disabled = false;
+  }
+}
+
+function pauseEmail(agent, name, paused, button) {
+  return act(button, (paused ? "Pausing " : "Resuming ") + name + "'s email…", () => api("POST", "/api/email/pause", { agent, paused }),
+    paused ? "Paused. " + name + " cannot send email until you resume it." : "Resumed " + name + "'s email.");
+}
+
+function blockEmail(key, button) {
+  return act(button, "Blocking " + key + "…", () => api("POST", "/api/email/block", { key }), "Blocked. No agent will email " + key + ".");
+}
+
+function unblockEmail(key, button) {
+  return act(button, "Unblocking " + key + "…", () => api("POST", "/api/email/unblock", { key }), "Unblocked " + key + ".");
+}
+
+const SITE_STATUS = { draft: "preview only", awaiting_payment: "waiting for the client to pay", live: "live, paid monthly", ended: "ended" };
+
+function renderSites() {
+  const s = state.sites;
+  if (!s) return;
+  $("sites-state").textContent = s.publicUrl
+    ? "Client sites are served at " + s.publicUrl + ". A site is public only while its client pays for hosting; take down anything you would not host yourself."
+    : "Not published: set sites.publicUrl to its own tunnel hostname (run `automaton-host sites tunnel`).";
+  $("client-sites").replaceChildren(...s.sites.map((x) => el("div", { class: "job", data: { site: x.slug } },
+    el("div", { class: "job-main" },
+      el("strong", { text: x.title }),
+      el("p", { class: "quiet", text: x.name + " · " + (SITE_STATUS[x.status] || x.status) + (x.priceCents ? " · " + usd(x.priceCents * 1e4, 2) + "/month" : "") +
+        (x.clientEmail ? " · " + x.clientEmail : "") + " · " + x.files + " files" + (x.pulled ? " · taken down by you" : "") }),
+      x.previewUrl ? el("p", { class: "mono", text: x.status === "live" ? x.liveUrl : x.previewUrl }) : null),
+    el("button", { type: "button", class: x.pulled ? "" : "danger", text: x.pulled ? "Put back" : "Take down",
+      on: { click: (ev) => act(ev.currentTarget, (x.pulled ? "Putting back " : "Taking down ") + x.slug + "…",
+        () => api("POST", "/api/sites/" + x.slug + "/" + (x.pulled ? "up" : "down"), {}),
+        x.pulled ? "Put back " + x.slug + "." : "Took down " + x.slug + ". It is offline, preview included.") } }))));
+  $("no-sites").hidden = s.sites.length > 0;
 }
 
 async function copyPromotion(p, button) {
@@ -596,8 +690,12 @@ async function refresh() {
   state.busy = true;
   try {
     state.overview = await api("GET", "/api/overview");
-    const [jobs, pays, stores] = await Promise.all([api("GET", "/api/jobs"), api("GET", "/api/payments"), api("GET", "/api/stores")]);
+    const [jobs, pays, stores, email, sites] = await Promise.all([
+      api("GET", "/api/jobs"), api("GET", "/api/payments"), api("GET", "/api/stores"), api("GET", "/api/email"), api("GET", "/api/sites"),
+    ]);
     state.stores = stores;
+    state.email = email;
+    state.sites = sites;
     state.jobs = jobs.jobs;
     state.payments = pays.payments;
     state.stripeEnabled = pays.stripeEnabled;
@@ -868,6 +966,15 @@ function init() {
   $("job-cancel").addEventListener("click", () => $("job-dialog").close());
   $("job-form").addEventListener("submit", submitJob);
   $("check-payments").addEventListener("click", (e) => checkPayments(e.currentTarget));
+  $("email-pause-all").addEventListener("click", (e) => pauseEmail("all", "every agent", !(state.email && state.email.paused), e.currentTarget));
+  $("email-block").addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const input = $("email-block-key");
+    const key = input.value.trim();
+    if (!key) return;
+    await blockEmail(key, e.submitter || e.currentTarget.querySelector("button"));
+    input.value = "";
+  });
   $("ledger-filter").addEventListener("change", () => refresh().catch((err) => say(err.message, true)));
   $("sign-out").addEventListener("click", signOut);
   $("copy-token").addEventListener("click", (e) => copyToken(e.currentTarget));

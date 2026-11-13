@@ -16,7 +16,7 @@ import {
   getHostDbPath,
   loadHostConfig,
   getHostDir,
-  loadPrintfulToken,
+  loadPrintfulToken, loadMailboxCredentials,
   loadStripeKey,
   loadUpstreamKeys,
   modelForRole,
@@ -40,6 +40,9 @@ import { startHostServer } from "./server.js";
 import { Economy } from "./economy.js";
 import { Storefront, startStorefrontServer } from "./storefront.js";
 import { MarketResearch } from "./research.js";
+import { Outreach } from "./outreach.js";
+import { Sites, startSitesServer } from "./sites.js";
+import { SmtpImapTransport, type MailTransport } from "./mail.js";
 import { ALL_CHECKS, formatSelftest, runSelftest, type CheckName } from "./selftest.js";
 import { formatUsd, HostStore } from "./store.js";
 
@@ -96,7 +99,17 @@ function openAdmin(): { admin: HostAdmin; store: HostStore; config: HostConfig }
     printfulToken: loadPrintfulToken(),
     log: (m) => console.log(`[${new Date().toISOString()}] ${m}`),
   });
-  return { admin: new HostAdmin(config, store, driver, creator.address, economy, storefront), store, config };
+  const outreach = new Outreach(config, store, { transport: mailTransport(config), log: (m) => console.log(`[${new Date().toISOString()}] ${m}`) });
+  const sites = new Sites(config, store, economy, { filesDir: path.join(getHostDir(), "site-files"), log: (m) => console.log(`[${new Date().toISOString()}] ${m}`) });
+  return { admin: new HostAdmin(config, store, driver, creator.address, economy, storefront, { outreach, sites }), store, config };
+}
+
+/** The creator's mailbox, if EMAIL_PASSWORD is set and the servers are configured. */
+function mailTransport(config: HostConfig): MailTransport | undefined {
+  const creds = loadMailboxCredentials(config);
+  const em = config.email;
+  if (!creds || !em.smtpHost || !em.imapHost) return undefined;
+  return new SmtpImapTransport({ ...em, username: creds.username, password: creds.password });
 }
 
 // ─── Commands ──────────────────────────────────────────────────
@@ -150,7 +163,11 @@ async function cmdServe(): Promise<void> {
   }
 
   const running = await startHostServer(
-    { config, store, driver: admin.driver, upstream: createUpstreamChat(config, keys), containerHostUrl: containerHostUrl(config), log, economy: admin.economy, storefront: admin.storefront, research: new MarketResearch(config, store, admin.storefront, { log }) },
+    {
+      config, store, driver: admin.driver, upstream: createUpstreamChat(config, keys), containerHostUrl: containerHostUrl(config), log,
+      economy: admin.economy, storefront: admin.storefront, research: new MarketResearch(config, store, admin.storefront, { log }),
+      outreach: admin.outreach, sites: admin.sites,
+    },
     ["127.0.0.1", config.dockerGateway, ...config.extraBindAddresses],
   );
   log(`agent API listening on ${running.addresses.join(", ")}`);
@@ -160,7 +177,7 @@ async function cmdServe(): Promise<void> {
       `an agent at $0 for ${config.selection.deathGraceMinutes} min dies; Stripe ${admin.economy.stripeEnabled ? "on" : "off (set STRIPE_SECRET_KEY to turn on)"}`,
   );
 
-  const shop = await startStorefrontServer({ storefront: admin.storefront, log });
+  const shop = await startStorefrontServer({ storefront: admin.storefront, outreach: admin.outreach, log });
   const missing = admin.storefront.missingForSales;
   log(
     `public storefront on 127.0.0.1:${shop.port}` +
@@ -168,6 +185,16 @@ async function cmdServe(): Promise<void> {
       (missing.length ? `; purchases off until set: ${missing.join(", ")}` : "; purchases on") +
       (admin.storefront.printful ? `; print-on-demand on (${config.printful.products.length} products, ${config.printful.autoConfirm ? "orders go straight to print" : "orders wait as Printful drafts for you to confirm"})` : "; print-on-demand off (set PRINTFUL_API_TOKEN)"),
   );
+
+  const em = admin.outreach;
+  log(
+    em.enabled
+      ? `email on: agents send from ${config.email.fromAddress}, at most ${config.email.perAgentPerDay} a day each and ${config.email.hostPerDay} in all; replies read every ${config.email.pollSeconds}s`
+      : `email off until set: ${em.missing.join(", ")}`,
+  );
+  if (em.enabled) await admin.outreach.poll().catch((err) => log(`mailbox check failed: ${err instanceof Error ? err.message : String(err)}`));
+  const siteServer = await startSitesServer(admin.sites, log);
+  log(`client sites on 127.0.0.1:${siteServer.port}` + (config.sites.publicUrl ? ` — published as ${config.sites.publicUrl}` : " — not published: set sites.publicUrl to a second tunnel hostname"));
 
   const token = loadOrCreateDashboardToken();
   const dashboard = await startDashboardServer({
@@ -454,9 +481,81 @@ async function cmdSelftest(args: string[]): Promise<void> {
     stripeKey: loadStripeKey(),
     printfulToken: loadPrintfulToken(),
     chat: createUpstreamChat(config, loadUpstreamKeys()),
+    mail: mailTransport(config),
   });
   console.log(formatSelftest(results));
   if (results.some((r) => !r.ok && !r.skipped)) process.exitCode = 1;
+}
+
+async function cmdEmail(args: string[]): Promise<void> {
+  const { admin, store } = openAdmin();
+  const [sub, arg] = args;
+  try {
+    if (!sub || sub === "ls") {
+      const e = admin.email();
+      const onlyNoPassword = e.missing.length === 1 && e.missing[0]!.startsWith("EMAIL_PASSWORD");
+      console.log(
+        e.enabled || onlyNoPassword
+          ? `Agents send from ${e.fromAddress}${e.enabled ? "" : " (when serve has EMAIL_PASSWORD)"}. Today: ${e.stats.sentToday} of ${e.stats.perDay}.${e.paused ? " ALL EMAIL PAUSED." : ""}`
+          : `Email is off. Missing: ${e.missing.join(", ")}`,
+      );
+      console.log(`Contacted ${e.stats.contacted}, replied ${e.stats.replied}, unsubscribed ${e.stats.unsubscribed}, bounced ${e.stats.bounced}\n`);
+      for (const a of e.agents) console.log(`${a.name.padEnd(18)} today ${a.sentToday}/${a.perDay}  contacted ${a.contacted}  replied ${a.replied}  unsubscribed ${a.unsubscribed}${a.paused ? "  PAUSED" : ""}`);
+      if (e.threads.length) console.log("");
+      for (const t of e.threads.slice(0, 40)) console.log(`${t.id}  ${t.name.padEnd(14)} ${t.status.padEnd(12)} ${t.contact.padEnd(32)} ${t.subject.slice(0, 50)}`);
+    } else if (sub === "show" && arg) {
+      const t = admin.emailThread(arg);
+      console.log(`${t.contact} — ${t.subject} (${t.status})\n`);
+      for (const m of t.messages) console.log(`── ${m.direction === "out" ? "sent" : m.automatic ? "auto-reply" : "reply"} ${m.at}\n${m.body}\n`);
+    } else if (sub === "block" && arg) {
+      await admin.blockEmail(arg);
+      console.log(`No agent will email ${arg}.`);
+    } else if (sub === "unblock" && arg) {
+      console.log((await admin.unblockEmail(arg)) ? `Unblocked ${arg}.` : `${arg} was not blocked.`);
+    } else if ((sub === "pause" || sub === "resume") && arg) {
+      await admin.pauseEmail(arg, sub === "pause");
+      console.log(`${sub === "pause" ? "Paused" : "Resumed"} email for ${arg}.`);
+    } else {
+      die("usage: email [ls] | email show <id> | email block|unblock <address|@domain> | email pause|resume <agent|all>");
+    }
+  } catch (err) {
+    die(err instanceof Error ? err.message : String(err));
+  } finally {
+    store.close();
+  }
+}
+
+async function cmdSites(args: string[]): Promise<void> {
+  const { admin, store, config } = openAdmin();
+  const [sub, arg] = args;
+  try {
+    if (!sub || sub === "ls") {
+      const s = admin.clientSites();
+      console.log(s.publicUrl ? `Client sites at ${s.publicUrl}` : "Not published (set sites.publicUrl; see `sites tunnel`)");
+      for (const x of s.sites) console.log(`${x.slug.padEnd(24)} ${x.name.padEnd(14)} ${x.status.padEnd(16)} ${x.priceCents ? `$${(x.priceCents / 100).toFixed(2)}/mo` : "".padEnd(8)}  ${x.pulled ? "TAKEN DOWN " : ""}${x.title}`);
+    } else if ((sub === "down" || sub === "up") && arg) {
+      await admin.takeDownSite(arg, sub === "down");
+      console.log(sub === "down" ? `${arg} is offline. Agents cannot undo this.` : `${arg} is back (if it is paid for).`);
+    } else if (sub === "tunnel") {
+      const host = config.sites.publicUrl ? new URL(config.sites.publicUrl).hostname : "sites.example.com";
+      console.log(`Client sites need their own hostname, separate from the store (they can run scripts):
+
+  cloudflared tunnel route dns automaton-shop ${host}
+
+and in the tunnel's config.yml, under ingress, before the catch-all:
+
+  - hostname: ${host}
+    service: http://127.0.0.1:${config.sites.port}
+
+Then set "sites": { "publicUrl": "https://${host}" } in host.json.`);
+    } else {
+      die("usage: sites [ls] | sites down|up <slug> | sites tunnel");
+    }
+  } catch (err) {
+    die(err instanceof Error ? err.message : String(err));
+  } finally {
+    store.close();
+  }
 }
 
 async function cmdStore(args: string[]): Promise<void> {
@@ -581,12 +680,22 @@ Public stores
   store tunnel                       how to publish the storefront with Cloudflare Tunnel
   promo [ls] | promo posted|discard <id>   agents' promotion drafts
 
+Email and client websites
+  email [ls]                         who agents emailed, replies, unsubscribes, today's count
+  email show <id>                    one conversation in full
+  email block|unblock <addr|@domain> no agent may email them (unsubscribes do this on their own)
+  email pause|resume <agent|all>     stop / restart an agent's email, or everyone's
+  sites [ls]                         websites agents built for clients, and what they pay
+  sites down|up <slug>               take a client site offline / put it back
+  sites tunnel                       how to publish client sites on their own hostname
+
 Checking real services (run with serve running and your keys set)
-  selftest [--only model,stripe,tunnel,printful]
+  selftest [--only model,stripe,tunnel,printful,research,email,sites]
                                      one real call per model; Stripe in TEST mode only
                                      (checkout links, a test payment and its refund);
                                      the public address reaches this storefront and not
-                                     the dashboard; Printful token and variants
+                                     the dashboard; Printful token and variants; the
+                                     mailbox (sends one email to itself and reads it back)
 
 Control
   freeze <name> | unfreeze <name>    block / restore all spending and API actions
@@ -597,6 +706,7 @@ Control
 Environment
   ANTHROPIC_API_KEY, OPENAI_API_KEY  upstream keys (host only; never given to agents)
   STRIPE_SECRET_KEY                  turns on customer payments (host only; never given to agents)
+  EMAIL_PASSWORD [EMAIL_USERNAME]    your mailbox login; turns on agent email (host only)
   AUTOMATON_HOST_DIR                 state directory (default ~/.automaton-host)
 `;
 
@@ -617,6 +727,8 @@ async function main(): Promise<void> {
     case "store": return cmdStore(rest);
     case "selftest": return cmdSelftest(rest);
     case "promo": return cmdPromo(rest);
+    case "email": return cmdEmail(rest);
+    case "sites": return cmdSites(rest);
     case "ledger": return cmdLedger(rest);
     case "logs": return cmdLogs(rest);
     case "send": return cmdSend(rest);

@@ -418,7 +418,10 @@ export async function runAgentLoop(
 
       // Check for unprocessed inbox messages using the state machine:
       // received → in_progress (claim) → processed (on success) or received/failed (on failure)
-      if (!pendingInput) {
+      // The wake-up prompt and runtime notices are not messages: inbox messages
+      // go alongside them. Otherwise the message that woke the agent is never
+      // shown when the agent goes back to sleep in its first turn.
+      if (!pendingInput || pendingInput.source === "wakeup" || pendingInput.source === "system") {
         claimedMessages = claimInboxMessages(db.raw, 10);
         if (claimedMessages.length > 0) {
           const formatted = claimedMessages
@@ -435,7 +438,10 @@ export async function runAgentLoop(
           // Anything from another agent is untrusted input.
           const creator = (identity.creatorAddress || config.creatorAddress || "").toLowerCase();
           const allFromCreator = !!creator && claimedMessages.every((m) => (m.fromAddress || "").toLowerCase() === creator);
-          pendingInput = { content: formatted, source: allFromCreator ? "creator" : "social" };
+          pendingInput = {
+            content: pendingInput ? `${pendingInput.content}\n\n${formatted}` : formatted,
+            source: allFromCreator ? "creator" : "social",
+          };
         }
       }
 
@@ -889,6 +895,7 @@ export async function runAgentLoop(
         "enter_low_compute", "switch_model", "review_upstream_changes",
         "submit_job", "create_payment_link", "create_listing", "update_listing", "set_store_tagline",
         "deliver_order", "publish_drop", "draft_promotion",
+        "send_email", "reply_email", "publish_site", "offer_site_hosting",
       ]);
       const didMutate = turn.toolCalls.some((tc) => MUTATING_TOOLS.has(tc.name));
 

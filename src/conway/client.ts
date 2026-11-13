@@ -512,6 +512,19 @@ export function createConwayClient(options: ConwayClientOptions): ConwayClient {
     return { lines: Array.isArray(r.lines) ? r.lines.map(String) : [], cached: r.cached === true, lookupsLeft: Number(r.lookups_left_this_hour) || 0 };
   };
 
+  const sendEmail = async (input: { to: string; businessName: string; sourceUrl: string; whyRelevant: string; subject: string; body: string }) =>
+    request("POST", "/v1/email", { to: input.to, business_name: input.businessName, source_url: input.sourceUrl, why_relevant: input.whyRelevant, subject: input.subject, body: input.body }, { ...once, timeout: 60_000 });
+  const replyEmail = async (threadId: string, input: { body: string; attachments?: Array<{ filename: string; contentBase64: string }> }) =>
+    request("POST", `/v1/email/threads/${encodeURIComponent(threadId)}/reply`, { body: input.body, attachments: (input.attachments ?? []).map((a) => ({ filename: a.filename, content_base64: a.contentBase64 })) }, { ...once, timeout: 60_000 });
+  const emailInbox = async () => request("GET", "/v1/email/inbox", undefined, once);
+  const emailThreads = async () => request("GET", "/v1/email/threads", undefined, once);
+  const emailThread = async (threadId: string) => request("GET", `/v1/email/threads/${encodeURIComponent(threadId)}`, undefined, once);
+  const publishSite = async (input: { slug: string; title: string; files: Array<{ path: string; contentBase64: string }> }) =>
+    request("POST", "/v1/sites", { slug: input.slug, title: input.title, files: input.files.map((f) => ({ path: f.path, content_base64: f.contentBase64 })) }, { ...once, timeout: 120_000 });
+  const listSites = async () => request("GET", "/v1/sites", undefined, once);
+  const offerSiteHosting = async (slug: string, input: { monthlyPriceCents: number; clientEmail?: string }) =>
+    request("POST", `/v1/sites/${encodeURIComponent(slug)}/offer`, { monthly_price_cents: input.monthlyPriceCents, client_email: input.clientEmail }, { ...once, timeout: 60_000 });
+
   const listPromotions = async (): Promise<PromotionDraft[]> => {
     const r = await request("GET", "/v1/promotions", undefined, once);
     return (Array.isArray(r.promotions) ? r.promotions : []).map(toPromotion);
@@ -808,7 +821,7 @@ export function createConwayClient(options: ConwayClientOptions): ConwayClient {
     listSandboxes,
     getCreditsBalance,
     getCreditsReceived,
-    ...(isSelfHosted(apiUrl) ? { getCreditsSpent, listJobs, submitJob, createPaymentLink, listPaymentLinks, getSelection, getStore, setStoreTagline, createListing, updateListing, publishDrop, listStoreOrders, deliverOrder, draftPromotion, listPromotions, researchMarket } : {}),
+    ...(isSelfHosted(apiUrl) ? { getCreditsSpent, listJobs, submitJob, createPaymentLink, listPaymentLinks, getSelection, getStore, setStoreTagline, createListing, updateListing, publishDrop, listStoreOrders, deliverOrder, draftPromotion, listPromotions, researchMarket, sendEmail, replyEmail, emailInbox, emailThreads, emailThread, publishSite, listSites, offerSiteHosting } : {}),
     getCreditsPricing,
     transferCredits,
     registerAutomaton,

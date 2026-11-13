@@ -371,7 +371,7 @@ describe("economy: earn or die", () => {
     h.store.transfer(friend.address, a.address, usd(5));
     expect(await h.economy.reap(t0 + 14 * DAY + 61 * 60_000)).toContain(a.address);
     expect(h.store.isDead(a.address)).toBe(true);
-    expect(h.economy.standings().find((s) => s.address === a.address)!.death!.reason).toBe("did not earn its keep in 14 days");
+    expect(h.economy.standings().find((s) => s.address === a.address)!.death!.reason).toBe("did not earn its keep in its starting period");
     expect(h.store.verifyLedger()).toEqual([]);
   });
 
@@ -454,10 +454,10 @@ describe("economy: earn or die", () => {
       const conway = createConwayClient({ apiUrl: h.url, apiKey: a.apiKey, sandboxId: "" });
       const fitness = () => new Map(createBuiltinTools("").map((t) => [t.name, t])).get("check_fitness")!.execute({}, { conway } as any);
       const t0 = Date.now();
-      await h.economy.reap(t0);
+      // No reaper pass yet: a newborn agent still sees its deadline on its first turn.
       h.store.charge(a.address, usd(0.25), "inference");
       expect(await fitness()).toMatch(/EARN OR DIE: by \S+ you must have earned more than you have cost \(more than \$0\.2500 so far\)/);
-      await h.economy.reap(t0 + 14 * 86_400_000);
+      await h.economy.reap(t0 + 14 * 86_400_000 + 60_000);
       expect(await fitness()).toMatch(/WARNING: your starting period is over .* Funding and transfers cannot save you\./);
     } finally {
       clearTrustedInsecureOrigins();

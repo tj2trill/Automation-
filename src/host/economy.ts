@@ -546,6 +546,18 @@ export class Economy {
 
   // ─── Death ───────────────────────────────────────────────────
 
+  /**
+   * Start an agent's starting period now, if it has not started. Called when an
+   * agent moves into its container, so the deadline exists from its first turn;
+   * the reaper also starts it for agents that were already running.
+   */
+  startEarnClock(addressRaw: string, now = Date.now()): void {
+    const address = normalizeAddress(addressRaw);
+    if (address === this.creator || this.store.isDead(address)) return;
+    if (!this.store.listSandboxes().some((s) => s.occupant === address)) return;
+    this.earnClock(address, now);
+  }
+
   /** Start of the agent's starting period, recorded the first time the host sees it in a container. */
   private earnClock(address: string, now: number): { startedAt: number; warned: string } {
     this.store.db
@@ -605,7 +617,7 @@ export class Economy {
       }
       const since = row ? new Date(row.since).getTime() : now;
       if (now - since < graceMs) continue;
-      await this.die(a.address, broke ? "ran out of money" : `did not earn its keep in ${this.config.selection.mustEarnAfterDays} days`);
+      await this.die(a.address, broke ? "ran out of money" : "did not earn its keep in its starting period");
       died.push(a.address);
     }
     return died;

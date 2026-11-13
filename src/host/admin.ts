@@ -566,6 +566,7 @@ export class HostAdmin {
 
       this.store.ensureAccount(address, name);
       this.store.updateSandbox(sb.id, { owner: address, occupant: address });
+      this.economy.startEarnClock(address);
       if (fundMicro > 0) this.store.topup(address, fundMicro, "initial funding at launch");
 
       const runtime = await this.startRuntime(sb);

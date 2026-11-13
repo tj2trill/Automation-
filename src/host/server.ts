@@ -308,6 +308,7 @@ export async function claimOccupancy(deps: HostServerDeps, remoteAddress: string
       deps.store.updateSandbox(sb.id, { occupant: address });
       // A container paid for by another agent holds that agent's child.
       if (isEvmAddress(sb.owner) && sb.owner !== address) deps.economy?.recordLineage(address, sb.owner);
+      deps.economy?.startEarnClock(address);
       return;
     }
   }
@@ -713,6 +714,7 @@ route("GET", /^\/v1\/payments$/, async (ctx) => {
 route("GET", /^\/v1\/selection$/, async (ctx) => {
   const address = requireAccount(ctx);
   const econ = requireEconomy(ctx);
+  econ.startEarnClock(address);
   const gate = econ.spawnGate(address);
   const fit = ctx.deps.store.getFitness(address);
   const me = econ.standings().find((s) => s.address === address);

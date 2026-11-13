@@ -176,7 +176,7 @@ async function cmdServe(): Promise<void> {
     `economy: a child needs $${config.selection.spawnProfitUsd} of earned profit per child; ` +
       `an agent at $0 for ${config.selection.deathGraceMinutes} min dies; ` +
       (config.selection.mustEarnAfterDays > 0
-        ? `after ${config.selection.mustEarnAfterDays} days an agent with no earned profit dies; `
+        ? `after ${formatDays(config.selection.mustEarnAfterDays)} an agent with no earned profit dies; `
         : "the earn-or-die rule is off; ") +
       `Stripe ${admin.economy.stripeEnabled ? "on" : "off (set STRIPE_SECRET_KEY to turn on)"}`,
   );
@@ -364,12 +364,20 @@ Stop it:   automaton-host kill ${r.name}`);
   store.close();
 }
 
+/** "14 days", or minutes/hours when a test host shrinks the starting period. */
+function formatDays(days: number): string {
+  const min = days * 1440;
+  if (min < 120) return `${Math.round(min)} minutes`;
+  if (days < 2) return `${Math.round(min / 60)} hours`;
+  return `${Math.round(days * 10) / 10} days`;
+}
+
 function cmdFund(args: string[]): void {
   const { admin, store } = openAdmin();
   const entry = admin.fund(args[0]!, args[1]);
   console.log(`Funded ${args[0]} (${entry.address}) +${formatUsd(entry.deltaMicro)} -> balance ${formatUsd(entry.balanceAfterMicro)}`);
   const days = admin.config.selection.mustEarnAfterDays;
-  if (days > 0) console.log(`Funding is not earnings: after its first ${days} days an agent lives only on earned profit, so this money cannot keep a non-earning agent alive.`);
+  if (days > 0) console.log(`Funding is not earnings: after its first ${formatDays(days)} an agent lives only on earned profit, so this money cannot keep a non-earning agent alive.`);
   store.close();
 }
 

@@ -6,7 +6,6 @@
  */
 
 import type {
-  AutomatonConfig,
   AutomatonDatabase,
   InferenceClient,
   SurvivalTier,

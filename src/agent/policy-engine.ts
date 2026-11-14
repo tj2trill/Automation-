@@ -11,7 +11,6 @@ import type Database from "better-sqlite3";
 import type {
   PolicyRule,
   PolicyRequest,
-  PolicyRuleResult,
   PolicyDecision,
   PolicyAction,
   AuthorityLevel,

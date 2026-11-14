@@ -9,7 +9,6 @@
 import type {
   ConwayClient,
   AutomatonIdentity,
-  AutomatonConfig,
   AutomatonDatabase,
   GenesisConfig,
   ChildAutomaton,

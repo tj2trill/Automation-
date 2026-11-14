@@ -11,7 +11,6 @@ import type {
   DiscoveredAgent,
   AgentCard,
   DiscoveryConfig,
-  DiscoveredAgentCacheRow,
 } from "../types.js";
 import { DEFAULT_DISCOVERY_CONFIG } from "../types.js";
 import { queryAgent, getTotalAgents, getRegisteredAgentsByEvents } from "./erc8004.js";

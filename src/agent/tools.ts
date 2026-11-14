@@ -16,7 +16,6 @@ import type {
   ToolCategory,
   InferenceToolDefinition,
   ToolCallResult,
-  GenesisConfig,
   RiskLevel,
   PolicyRequest,
   InputSource,

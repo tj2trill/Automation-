@@ -10,7 +10,6 @@ import { isIdleOnlyTool } from "./idle-only-tools.js";
 import type {
   ChatMessage,
   AgentTurn,
-  AutomatonDatabase,
   InferenceClient,
   TokenBudget,
   MemoryRetrievalResult,

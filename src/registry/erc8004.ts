@@ -27,7 +27,6 @@ import type {
   RegistryEntry,
   DiscoveredAgent,
   AutomatonDatabase,
-  OnchainTransactionRow,
 } from "../types.js";
 import { ulid } from "ulid";
 import { createLogger } from "../observability/logger.js";

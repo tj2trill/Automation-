@@ -5,9 +5,8 @@
  * Replaces unauthenticated filesystem-based messageChild().
  */
 
-import type { SocialClientInterface, ParentChildMessage } from "../types.js";
+import type { SocialClientInterface } from "../types.js";
 import { MESSAGE_LIMITS } from "../types.js";
-import { ulid } from "ulid";
 
 /**
  * Send a message to a child via the social relay.

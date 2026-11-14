@@ -4,7 +4,7 @@
  * All shared interfaces for the sovereign AI agent runtime.
  */
 
-import type { PrivateKeyAccount, Address } from "viem";
+import type { PrivateKeyAccount } from "viem";
 import type { ChainType, ChainIdentity } from "./identity/chain.js";
 
 // ─── Identity ────────────────────────────────────────────────────

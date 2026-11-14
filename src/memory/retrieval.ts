@@ -15,7 +15,6 @@ import { SemanticMemoryManager } from "./semantic.js";
 import { ProceduralMemoryManager } from "./procedural.js";
 import { RelationshipMemoryManager } from "./relationship.js";
 import { MemoryBudgetManager } from "./budget.js";
-import { estimateTokens } from "../agent/context.js";
 import { createLogger } from "../observability/logger.js";
 const logger = createLogger("memory.retrieval");
 

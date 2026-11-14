@@ -38,7 +38,7 @@ import { ResilientHttpClient } from "./http-client.js";
 import { isSelfHosted } from "./endpoint.js";
 import { ulid } from "ulid";
 import { keccak256, toHex } from "viem";
-import type { Address, PrivateKeyAccount } from "viem";
+import type { PrivateKeyAccount } from "viem";
 import { randomUUID } from "crypto";
 import type { ChainType, ChainIdentity } from "../identity/chain.js";
 

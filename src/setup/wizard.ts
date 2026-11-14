@@ -36,7 +36,7 @@ export async function runSetupWizard(): Promise<AutomatonConfig> {
     console.log(chalk.green("  Chain: EVM (secp256k1)\n"));
   }
 
-  const { account, chainIdentity, chainType: walletChainType, isNew } = await getWallet(selectedChain);
+  const { chainIdentity, chainType: walletChainType, isNew } = await getWallet(selectedChain);
   const walletAddress = chainIdentity.address;
   if (isNew) {
     console.log(chalk.green(`  Wallet created: ${walletAddress}`));

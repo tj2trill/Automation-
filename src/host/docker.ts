@@ -158,6 +158,15 @@ export class DockerCliDriver implements SandboxDriver {
       // No raw sockets: a container cannot forge another container's source
       // address on the bridge, which the host uses to tell sandboxes apart.
       "--cap-drop", "NET_RAW",
+      // The agent is root inside its container and runs whatever it writes.
+      // A setuid binary must not hand it more than it starts with, and it has
+      // no use for device nodes, chroot, file capabilities or the audit log.
+      // apt-get, npm -g, git and the runtime all work without these.
+      "--security-opt", "no-new-privileges",
+      "--cap-drop", "MKNOD",
+      "--cap-drop", "SYS_CHROOT",
+      "--cap-drop", "SETFCAP",
+      "--cap-drop", "AUDIT_WRITE",
     ];
     for (const [host, ip] of Object.entries(opts.hostAliases)) args.push("--add-host", `${host}:${ip}`);
     for (const [k, v] of Object.entries(opts.env)) args.push("--env", `${k}=${v}`);

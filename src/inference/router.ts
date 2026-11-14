@@ -7,7 +7,6 @@
  */
 
 import type BetterSqlite3 from "better-sqlite3";
-import { ulid } from "ulid";
 import type {
   InferenceRequest,
   InferenceResult,
@@ -25,12 +24,10 @@ import { DEFAULT_ROUTING_MATRIX, TASK_TIMEOUTS } from "./types.js";
 type Database = BetterSqlite3.Database;
 
 export class InferenceRouter {
-  private db: Database;
   private registry: ModelRegistry;
   private budget: InferenceBudgetTracker;
 
   constructor(db: Database, registry: ModelRegistry, budget: InferenceBudgetTracker) {
-    this.db = db;
     this.registry = registry;
     this.budget = budget;
   }

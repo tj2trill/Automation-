@@ -10,7 +10,6 @@ import { isIdleOnlyTool } from "./idle-only-tools.js";
 import type {
   ChatMessage,
   AgentTurn,
-  AutomatonDatabase,
   InferenceClient,
   TokenBudget,
   MemoryRetrievalResult,
@@ -19,7 +18,6 @@ import { DEFAULT_TOKEN_BUDGET } from "../types.js";
 import { createTokenCounter } from "../memory/context-manager.js";
 
 const MAX_CONTEXT_TURNS = 20;
-const SUMMARY_THRESHOLD = 15;
 
 let tokenCounter: ReturnType<typeof createTokenCounter> | null = null;
 

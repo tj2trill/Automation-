@@ -6,7 +6,7 @@
  * The automaton's entire identity history is version-controlled and replayable.
  */
 
-import type { ConwayClient, AutomatonDatabase } from "../types.js";
+import type { ConwayClient } from "../types.js";
 import { gitInit, gitCommit, gitStatus, gitLog } from "./tools.js";
 
 const AUTOMATON_DIR = "~/.automaton";

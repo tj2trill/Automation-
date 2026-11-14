@@ -4,3 +4,15 @@ dist
 **/dist
 .git
 *.log
+
+# Local secrets and state must never be baked into the image every agent runs.
+.env
+.env.*
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+.automaton
+.automaton-host
+*.pem
+*.key

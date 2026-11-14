@@ -11,7 +11,6 @@ import type Database from "better-sqlite3";
 import type {
   PolicyRule,
   PolicyRequest,
-  PolicyRuleResult,
   PolicyDecision,
   PolicyAction,
   AuthorityLevel,
@@ -34,7 +33,6 @@ export class PolicyEngine {
    * Returns a PolicyDecision with the overall action.
    */
   evaluate(request: PolicyRequest): PolicyDecision {
-    const startTime = Date.now();
     const applicableRules = this.rules.filter((rule) =>
       this.ruleApplies(rule, request),
     );

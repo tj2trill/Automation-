@@ -107,7 +107,7 @@ export async function parseIncoming(uid: number, raw: Buffer | string): Promise<
 }
 
 export class SmtpImapTransport implements MailTransport {
-  private smtp: nodemailer.Transporter;
+  private smtp: ReturnType<typeof nodemailer.createTransport>;
 
   constructor(private readonly s: MailboxSettings) {
     this.smtp = nodemailer.createTransport({

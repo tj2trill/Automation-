@@ -11,7 +11,7 @@ import fs from "fs";
 import path from "path";
 import type BetterSqlite3 from "better-sqlite3";
 import type { SoulModel, SoulHistoryRow } from "../types.js";
-import { loadCurrentSoul, writeSoulMd, createHash, createDefaultSoul } from "./model.js";
+import { writeSoulMd, createHash, createDefaultSoul } from "./model.js";
 import { loadAuthoritativeSoul } from "./authority.js";
 import { validateSoul } from "./validator.js";
 import { insertSoulHistory, getCurrentSoulVersion, getLatestSoulHistory, getSoulHistory } from "../state/database.js";

@@ -74,7 +74,7 @@ export async function provision(
   trustInsecureOrigin(isSelfHosted(url) ? url : undefined);
 
   // 1. Load wallet
-  const { account, chainIdentity, chainType } = await getWallet();
+  const { account, chainIdentity } = await getWallet();
   const identity = solanaIdentity || chainIdentity;
   const address = identity.address;
   const isSolana = identity.chainType === "solana";

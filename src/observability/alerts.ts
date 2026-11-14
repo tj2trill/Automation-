@@ -6,7 +6,7 @@
  * Never throws — evaluates all rules and collects errors silently.
  */
 
-import type { AlertRule, AlertEvent, AlertSeverity, MetricSnapshot } from "../types.js";
+import type { AlertRule, AlertEvent, MetricSnapshot } from "../types.js";
 
 export function createDefaultAlertRules(): AlertRule[] {
   return [

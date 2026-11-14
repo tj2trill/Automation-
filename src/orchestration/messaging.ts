@@ -10,7 +10,6 @@ import type { AutomatonDatabase, InboxMessage } from "../types.js";
 import { insertEvent } from "../state/database.js";
 import { createLogger } from "../observability/logger.js";
 import { ulid } from "ulid";
-import type BetterSqlite3 from "better-sqlite3";
 
 const logger = createLogger("orchestration.messaging");
 

@@ -16,7 +16,6 @@ import path from "path";
 import * as yaml from "yaml";
 import type {
   Skill,
-  SkillSource,
   AutomatonDatabase,
   ConwayClient,
 } from "../types.js";

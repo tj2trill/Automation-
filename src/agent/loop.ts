@@ -14,10 +14,8 @@ import type {
   InferenceClient,
   AgentState,
   AgentTurn,
-  ToolCallResult,
   FinancialState,
   ToolContext,
-  AutomatonTool,
   Skill,
   SocialClientInterface,
   SpendTrackerInterface,
@@ -755,7 +753,6 @@ export async function runAgentLoop(
 
       // ── Execute Tool Calls ──
       if (response.toolCalls && response.toolCalls.length > 0) {
-        const toolCallMessages: any[] = [];
         let callCount = 0;
         const currentInputSource = (currentInput?.source ?? "agent") as InputSource;
 

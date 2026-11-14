@@ -19,7 +19,6 @@ import {
   planGoal,
   replanAfterFailure,
   type PlannerOutput,
-  type PlannedTask,
   taskToPlannerFailureInput,
 } from "./planner.js";
 import { ColonyMessaging, type AgentMessage } from "./messaging.js";

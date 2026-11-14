@@ -6,7 +6,6 @@
  */
 
 import type BetterSqlite3 from "better-sqlite3";
-import { ulid } from "ulid";
 import type { InferenceCostRow, ModelStrategyConfig } from "../types.js";
 import {
   inferenceInsertCost,

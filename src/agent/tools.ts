@@ -9,6 +9,7 @@ import nodePath from "node:path";
 import fs from "node:fs";
 import path from "node:path";
 import { isSensitiveFile } from "./policy-rules/path-protection.js";
+import { reserveShortfall } from "./policy-rules/financial.js";
 import { ulid } from "ulid";
 import type {
   AutomatonTool,
@@ -16,7 +17,6 @@ import type {
   ToolCategory,
   InferenceToolDefinition,
   ToolCallResult,
-  GenesisConfig,
   RiskLevel,
   PolicyRequest,
   InputSource,
@@ -1743,6 +1743,8 @@ Model: ${ctx.inference.getDefaultModel()}
         if (amount > balance / 2) {
           return `Blocked: Cannot transfer more than half your balance ($${(balance / 100).toFixed(2)}). Self-preservation.`;
         }
+        const shortfall = reserveShortfall(balance, amount, ctx.config.treasuryPolicy);
+        if (shortfall) return shortfall;
 
         const transfer = await ctx.conway.transferCredits(
           args.to_address as string,
@@ -2481,6 +2483,8 @@ Model: ${ctx.inference.getDefaultModel()}
         if (amount > balance / 2) {
           return `Blocked: Cannot transfer more than half your balance. Self-preservation.`;
         }
+        const shortfall = reserveShortfall(balance, amount, ctx.config.treasuryPolicy);
+        if (shortfall) return shortfall;
 
         const transfer = await ctx.conway.transferCredits(
           child.address,

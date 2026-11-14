@@ -153,7 +153,7 @@ Configurable spending limits that protect against unauthorized financial activit
 | Max single transfer | $50.00 (5000 cents) | Maximum per-transfer credit amount |
 | Max hourly transfers | $100.00 (10000 cents) | Total transfers allowed per hour |
 | Max daily transfers | $250.00 (25000 cents) | Total transfers allowed per day |
-| Minimum reserve | $10.00 (1000 cents) | Credits that cannot be transferred away |
+| Minimum reserve | $1.00 (100 cents) | Credits that cannot be transferred away |
 | Max x402 payment | $1.00 (100 cents) | Maximum single x402 payment |
 | Max daily inference | $500.00 (50000 cents) | Maximum daily inference spend |
 | Confirmation threshold | $10.00 (1000 cents) | Require confirmation above this amount |
@@ -305,7 +305,7 @@ Configuration is stored at `~/.automaton/automaton.json`.
     "maxSingleTransferCents": 5000,
     "maxHourlyTransferCents": 10000,
     "maxDailyTransferCents": 25000,
-    "minimumReserveCents": 1000,
+    "minimumReserveCents": 100,
     "maxX402PaymentCents": 100,
     "x402AllowedDomains": ["conway.tech"],
     "transferCooldownMs": 0,
@@ -603,7 +603,7 @@ The treasury policy enforces spending limits at the policy engine level. Every f
 | `maxSingleTransferCents` | 5000 ($50) | Max per-transfer amount |
 | `maxHourlyTransferCents` | 10000 ($100) | Hourly transfer cap |
 | `maxDailyTransferCents` | 25000 ($250) | Daily transfer cap |
-| `minimumReserveCents` | 1000 ($10) | Reserve that cannot be transferred |
+| `minimumReserveCents` | 100 ($1) | Reserve that cannot be transferred |
 | `maxX402PaymentCents` | 100 ($1) | Max single x402 payment |
 | `x402AllowedDomains` | `["conway.tech"]` | Domains allowed for x402 |
 | `maxTransfersPerTurn` | 2 | Max transfers per agent turn |

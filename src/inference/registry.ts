@@ -18,14 +18,6 @@ import {
 
 type Database = BetterSqlite3.Database;
 
-const TIER_ORDER: Record<string, number> = {
-  dead: 0,
-  critical: 1,
-  low_compute: 2,
-  normal: 3,
-  high: 4,
-};
-
 export class ModelRegistry {
   private db: Database;
 

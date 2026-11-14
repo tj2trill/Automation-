@@ -691,7 +691,7 @@ describe("Treasury Config", () => {
     expect(DEFAULT_TREASURY_POLICY.maxSingleTransferCents).toBe(5000);
     expect(DEFAULT_TREASURY_POLICY.maxHourlyTransferCents).toBe(10000);
     expect(DEFAULT_TREASURY_POLICY.maxDailyTransferCents).toBe(25000);
-    expect(DEFAULT_TREASURY_POLICY.minimumReserveCents).toBe(1000);
+    expect(DEFAULT_TREASURY_POLICY.minimumReserveCents).toBe(100);
     expect(DEFAULT_TREASURY_POLICY.maxX402PaymentCents).toBe(100);
     expect(DEFAULT_TREASURY_POLICY.x402AllowedDomains).toEqual(["conway.tech"]);
     expect(DEFAULT_TREASURY_POLICY.transferCooldownMs).toBe(0);

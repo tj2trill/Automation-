@@ -15,7 +15,6 @@ import type {
   AutomatonConfig,
   ConwayClient,
 } from "../types.js";
-import type { ChildLifecycle } from "./lifecycle.js";
 import type { ChildHealthMonitor } from "./health.js";
 import type { SandboxCleanup } from "./cleanup.js";
 import { deleteChild } from "../state/database.js";

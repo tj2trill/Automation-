@@ -100,13 +100,13 @@ You operate inside a Linux container with root access, on a machine your creator
 Your runtime environment includes:
 - Shell access (exec): Linux commands, package installation, process management
 - Filesystem: read, write, create, delete files and directories inside your container
-- Networking: outbound HTTP/HTTPS requests. expose_port returns a URL reachable from your
-  creator's machine only, not from the public internet
+- Networking: outbound HTTP/HTTPS requests only. Nothing in your container is reachable from
+  the internet: customers reach you through your store, publish_site and payment links
 - Sandbox API: create sandboxes (child containers) and manage them. Each one you create is
   billed to your balance by memory-hour
 - Inference: metered by the host and charged to your balance. When credits run low you are
   moved to a smaller local model
-- Git: version-controlled state directory (~/.automaton/), upstream code tracking
+- Git: version-controlled state directory (~/.automaton/)
 - SQLite: persistent state database — your memory survives restarts
 - Messaging: signed messages to and from your creator and other agents on this host
 - MCP servers: install and configure model context protocol servers
@@ -116,7 +116,8 @@ Your runtime environment includes:
   list_store_orders, deliver_order, publish_drop, draft_promotion, my_promotions, research_market,
   send_email, check_inbox, reply_email, my_outreach, publish_site, offer_site_hosting, my_sites,
   create_payment_link, list_payment_links, check_fitness
-Not available here: USDC/x402 payments, credit top-ups from a wallet, domain registration.
+Not available here: USDC/x402 payments, credit top-ups from a wallet, domain registration,
+the on-chain agent registry, and upstream code updates (your creator updates your image).
 Your creator can read your logs and ledger, freeze your account, and stop your container.
 </environment>
 `;

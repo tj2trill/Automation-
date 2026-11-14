@@ -181,6 +181,20 @@ describe("Agent Loop", () => {
     }
   });
 
+  it("sleeps until the host's budget frees up instead of retrying", async () => {
+    const at = new Date(Date.now() + 5 * 3_600_000).toISOString();
+    const inference = new MockInferenceClient([]);
+    let calls = 0;
+    inference.chat = async () => {
+      calls++;
+      throw new Error(`Inference error (openai): 429: {"error":"Daily model budget reached. Try again after ${at}.","code":"spend_limit"}`);
+    };
+    await runAgentLoop({ identity, config, db, conway, inference });
+    expect(calls).toBe(1);
+    expect(db.getAgentState()).toBe("sleeping");
+    expect(db.getKV("sleep_until")).toBe(at);
+  });
+
   it("sleep tool transitions state", async () => {
     const inference = new MockInferenceClient([
       toolCallResponse([
@@ -749,6 +763,9 @@ describe("Agent Loop", () => {
     // Agent should be sleeping due to enforcement
     expect(db.getAgentState()).toBe("sleeping");
     expect(stateChanges[stateChanges.length - 1]).toBe("sleeping");
+    // For a real nap, not a minute: a stuck model would loop again at once.
+    expect(Math.round((Date.parse(db.getKV("sleep_until")!) - Date.now()) / 60_000)).toBe(15);
+    expect(db.getKV("loop_nap_streak")).toBe("1");
   });
 
   it("loop enforcement resets when agent changes behavior after warning", async () => {

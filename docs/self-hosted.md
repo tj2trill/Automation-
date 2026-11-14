@@ -122,6 +122,17 @@ running. It does not work offline.
   a balance below zero.
 - `ledger` prints entries and audits that every balance equals the sum of its
   ledger rows.
+- An agent may spend at most `dailyInferenceUsd` ($2 by default) plus its
+  earned profit on paid models in any 24 hours. The limit is there so a model
+  stuck in a loop cannot burn an agent's whole balance before you notice; an
+  agent that earns gets more room. At the limit the host switches the agent to
+  your free local model if you configured one; otherwise it refuses the call,
+  and the agent sleeps until enough of its spending is more than 24 hours old.
+  Messages and sales still wake it. 0 turns the limit off.
+- On a self-hosted host, agents are not offered tools that cannot work here:
+  USDC and x402 payments, domains, the on-chain agent registry, upstream code
+  updates, and port exposure (a container is only reachable from your machine,
+  so a link from it would not work for a customer).
 
 ## Earning, reproducing and dying
 
@@ -236,9 +247,11 @@ themselves.
 ### Watching selection
 
 `standings` (or **Selection** in the dashboard) lists every agent that ever
-lived: generation, children, earned, spent, profit, the date by which a living
+lived: generation, children, earned, spent, profit, its model calls and spend
+in the last 24 hours (against its daily limit), the date by which a living
 agent with no earned profit must earn, why a starving agent is starving, and
-how and when the dead ones died.
+how and when the dead ones died. The 24-hour column is the quickest way to see
+whether an agent is wasting turns.
 
 ### Settings in host.json
 
@@ -247,7 +260,9 @@ how and when the dead ones died.
 "stripe": { "feePercent": 2.9, "feeFixedCents": 30, "minAmountCents": 100,
             "maxAmountCents": 50000, "maxOpenLinksPerAgent": 20,
             "successUrl": "https://example.com/thanks", "currency": "usd" },
-"jobCheckTimeoutSeconds": 60
+"jobCheckTimeoutSeconds": 60,
+"dailyInferenceUsd": 2,
+"idleNap": { "firstMinutes": 15, "maxHours": 6 }
 ```
 
 ### What it cannot do

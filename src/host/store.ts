@@ -278,6 +278,7 @@ CREATE TABLE IF NOT EXISTS usage (
   output_tokens  INTEGER NOT NULL,
   cost_micro     INTEGER NOT NULL
 );
+CREATE INDEX IF NOT EXISTS usage_address_ts ON usage(address, ts);
 `;
 
 /** Sender address of the host's own notes to agents. Not a wallet. */
@@ -599,6 +600,14 @@ export class HostStore {
     return rows
       .filter((r) => r.balance !== r.total)
       .map((r) => ({ address: r.address, balanceMicro: r.balance, ledgerSumMicro: r.total }));
+  }
+
+  /** Paid model spending since `sinceIso`, and when the oldest of it was. */
+  inferenceSince(address: string, sinceIso: string): { costMicro: number; calls: number; oldest: string | null } {
+    const r = this.db
+      .prepare("SELECT COALESCE(SUM(cost_micro), 0) AS cost, COUNT(*) AS calls, MIN(ts) AS oldest FROM usage WHERE address = ? AND ts >= ? AND cost_micro > 0")
+      .get(normalizeAddress(address), sinceIso) as { cost: number; calls: number; oldest: string | null };
+    return { costMicro: r.cost, calls: r.calls, oldest: r.oldest };
   }
 
   recordUsage(u: { address: string; model: string; upstream: string; inputTokens: number; outputTokens: number; costMicro: number }): string {

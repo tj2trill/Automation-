@@ -29,6 +29,7 @@
 import { monotonicFactory } from "ulid";
 import type { HostConfig } from "./config.js";
 import type { SandboxDriver } from "./docker.js";
+import { spendWindow } from "./inference-proxy.js";
 import { AccountDeadError, HostStore, MICRO_PER_CENT, MICRO_PER_USD, formatUsd, normalizeAddress } from "./store.js";
 
 const ulid = monotonicFactory();
@@ -105,6 +106,8 @@ export interface Standing {
   starvingReason: "out of money" | "not earning" | null;
   /** End of the starting period; from then on the agent must stay in earned profit. Null when the rule is off. */
   mustEarnBy: string | null;
+  /** Paid model calls and spending in the last 24 hours, against the daily limit (0 = no limit). */
+  day: { calls: number; inferenceMicro: number; limitMicro: number };
   death: null | { at: string; reason: string };
 }
 
@@ -726,6 +729,11 @@ export class Economy {
         starvingSince: !death && hungry ? hungry.since : null,
         diesAt: !death && hungry ? new Date(new Date(hungry.since).getTime() + graceMs).toISOString() : null,
         starvingReason: !death && hungry ? (a.balanceMicro <= 0 ? "out of money" : "not earning") : null,
+        day: (() => {
+          const used = this.store.inferenceSince(a.address, new Date(now - 86_400_000).toISOString());
+          const limit = this.config.dailyInferenceUsd > 0 ? spendWindow(this.store, a.address, this.config, now).limitMicro : 0;
+          return { calls: used.calls, inferenceMicro: used.costMicro, limitMicro: limit };
+        })(),
         mustEarnBy: (() => {
           const c = clocks.find((x) => x.address === a.address);
           return c && earnMs > 0 ? new Date(new Date(c.started_at).getTime() + earnMs).toISOString() : null;

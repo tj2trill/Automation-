@@ -17,7 +17,7 @@ import { createInferenceClient } from "../conway/inference.js";
 import type { HostConfig, HostModelConfig, UpstreamKeys } from "./config.js";
 import { modelForRole } from "./config.js";
 import type { HostStore } from "./store.js";
-import { microToCents } from "./store.js";
+import { formatUsd, microToCents } from "./store.js";
 
 export class ProxyError extends Error {
   constructor(public readonly status: number, message: string, public readonly code: string) {
@@ -124,6 +124,16 @@ export function createUpstreamChat(config: HostConfig, keys: UpstreamKeys): Upst
   };
 }
 
+/** What an agent has spent on paid models in the last 24 hours, its limit, and when the oldest of it drops out. */
+export function spendWindow(store: HostStore, address: string, config: HostConfig, now = Date.now()): { spentMicro: number; limitMicro: number; resetsAt: string } {
+  const since = new Date(now - 86_400_000).toISOString();
+  const used = store.inferenceSince(address, since);
+  const fit = store.getFitness(address);
+  const limitMicro = Math.round(config.dailyInferenceUsd * 1_000_000) + Math.max(0, fit.earnedMicro - fit.spentMicro);
+  const resetsAt = new Date((used.oldest ? Date.parse(used.oldest) : now) + 86_400_000).toISOString();
+  return { spentMicro: used.costMicro, limitMicro, resetsAt };
+}
+
 export interface ProxyResult {
   body: Record<string, unknown>;
   servedBy: HostModelConfig;
@@ -163,6 +173,24 @@ export async function handleChatCompletion(params: {
       );
     }
     model = free;
+  }
+
+  // Daily ceiling on paid models: a model stuck in a loop cannot burn more
+  // than this before the creator notices. Earned profit raises it.
+  if (!isFree(model) && config.dailyInferenceUsd > 0) {
+    const day = spendWindow(store, address, config);
+    if (day.spentMicro >= day.limitMicro) {
+      const free = modelForRole(config, "critical");
+      if (!isFree(free)) {
+        throw new ProxyError(
+          429,
+          `Daily model budget reached: ${formatUsd(day.spentMicro)} spent in the last 24 hours, limit ${formatUsd(day.limitMicro)} ` +
+            `($${config.dailyInferenceUsd} plus your earned profit). Try again after ${day.resetsAt}.`,
+          "spend_limit",
+        );
+      }
+      model = free;
+    }
   }
 
   const requestedMax = request.max_completion_tokens ?? request.max_tokens ?? model.maxTokens ?? 4096;

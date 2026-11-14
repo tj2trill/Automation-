@@ -88,7 +88,14 @@ export function chainPaymentsEnabled(): boolean {
   return chainPayments;
 }
 
-/** Tools that only work against Conway Cloud or on-chain funds. */
+/**
+ * Tools hidden from an agent on a self-hosted control plane, because they can
+ * never do what they promise there: Conway Cloud and on-chain payments, the
+ * on-chain agent registry, upstream updates (the runtime image has no git
+ * remote), and port exposure (a container is reachable from the creator's
+ * machine only, so a "public" URL handed to a customer would not work). Each
+ * one offered costs prompt tokens on every turn and invites wasted calls.
+ */
 export const CONWAY_ONLY_TOOLS: ReadonlySet<string> = new Set([
   "check_usdc_balance",
   "topup_credits",
@@ -96,4 +103,14 @@ export const CONWAY_ONLY_TOOLS: ReadonlySet<string> = new Set([
   "search_domains",
   "register_domain",
   "manage_dns",
+  "register_erc8004",
+  "update_agent_card",
+  "discover_agents",
+  "give_feedback",
+  "check_reputation",
+  "review_upstream_changes",
+  "pull_upstream",
+  "reset_to_upstream",
+  "expose_port",
+  "remove_port",
 ]);

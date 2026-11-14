@@ -374,7 +374,9 @@ function renderEconomy() {
     el("td", { class: "num pos", text: usd(s.earnedMicro) }),
     el("td", { class: "num", text: usd(s.spentMicro) }),
     el("td", { class: "num " + (s.profitMicro < 0 ? "neg" : "pos"), text: usd(s.profitMicro) }),
-    el("td", { class: "num", text: s.alive ? usd(s.balanceMicro) : "" }))));
+    el("td", { class: "num", text: s.alive ? usd(s.balanceMicro) : "" }),
+    el("td", { class: "num", text: s.alive && s.day ? s.day.calls + (s.day.calls === 1 ? " call, " : " calls, ") + usd(s.day.inferenceMicro) +
+      (s.day.limitMicro ? " of " + usd(s.day.limitMicro, 2) : "") : "" }))));
   $("standings").hidden = e.standings.length === 0;
   $("no-standings").hidden = e.standings.length > 0;
 

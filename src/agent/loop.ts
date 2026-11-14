@@ -107,9 +107,15 @@ const MUTATING_TOOL_NAMES = new Set([
   "send_email", "reply_email", "publish_site", "offer_site_hosting",
 ]);
 
-export function nextIdleNapMs(db: Pick<AutomatonDatabase, "getKV" | "setKV">): number {
-  const streak = Math.max(0, Number(db.getKV(IDLE_NAP_KEY)) || 0);
-  db.setKV(IDLE_NAP_KEY, String(streak + 1));
+// Separate count for naps forced on an agent caught repeating itself. Real
+// work resets the idle streak but not this one: a model stuck running the
+// same command is "working" on every turn. Ending a wake-up on its own (the
+// sleep tool) resets it.
+const LOOP_NAP_KEY = "loop_nap_streak";
+
+export function nextIdleNapMs(db: Pick<AutomatonDatabase, "getKV" | "setKV">, key = IDLE_NAP_KEY): number {
+  const streak = Math.max(0, Number(db.getKV(key)) || 0);
+  db.setKV(key, String(streak + 1));
   // The host sets these on the container from host.json (idleNap).
   const envNum = (name: string, fallback: number, lo: number, hi: number) => {
     const v = Number(process.env[name]);
@@ -118,6 +124,18 @@ export function nextIdleNapMs(db: Pick<AutomatonDatabase, "getKV" | "setKV">): n
   const first = envNum("AUTOMATON_IDLE_NAP_FIRST_MIN", IDLE_NAP_FIRST_MS / 60_000, 1, 1440) * 60_000;
   const max = Math.max(first, envNum("AUTOMATON_IDLE_NAP_MAX_HOURS", IDLE_NAP_MAX_MS / 3_600_000, 0.02, 168) * 3_600_000);
   return Math.min(first * 2 ** Math.min(streak, 20), max);
+}
+
+/**
+ * When the host refused a model call because the agent's daily budget is
+ * spent, the time it said to try again (at least a minute, at most a day away).
+ */
+export function spendLimitResetsAt(err: unknown, now = Date.now()): Date | null {
+  const msg = err instanceof Error ? err.message : String(err ?? "");
+  if (!/spend_limit/.test(msg)) return null;
+  const at = Date.parse(/Try again after (\S+?Z)/.exec(msg)?.[1] ?? "");
+  const t = Number.isFinite(at) ? at : now + 3_600_000;
+  return new Date(Math.min(Math.max(t, now + 60_000), now + 86_400_000));
 }
 
 // Bookkeeping an agent can do on every wake-up without producing anything.
@@ -871,6 +889,9 @@ export async function runAgentLoop(
           };
           loopWarningPattern = null;
           lastToolPatterns = [];
+          const napMs = nextIdleNapMs(db, LOOP_NAP_KEY);
+          log(config, `[LOOP] Sleeping ${Math.round(napMs / 60_000)} min unless woken.`);
+          db.setKV("sleep_until", new Date(Date.now() + napMs).toISOString());
           db.setAgentState("sleeping");
           onStateChange?.("sleeping");
           running = false;
@@ -930,6 +951,7 @@ export async function runAgentLoop(
       const sleepTool = turn.toolCalls.find((tc) => tc.name === "sleep");
       if (sleepTool && !sleepTool.error) {
         log(config, "[SLEEP] Agent chose to sleep.");
+        db.deleteKV(LOOP_NAP_KEY);
         db.setAgentState("sleeping");
         onStateChange?.("sleeping");
         running = false;
@@ -989,7 +1011,10 @@ export async function runAgentLoop(
 
       consecutiveErrors = 0;
     } catch (err: any) {
-      consecutiveErrors++;
+      // The host's daily model budget is spent. Retrying costs nothing but
+      // gets nothing either: wait until the host says room frees up.
+      const budgetUntil = spendLimitResetsAt(err);
+      if (!budgetUntil) consecutiveErrors++;
       log(config, `[ERROR] Turn failed: ${err.message}`);
 
       // Handle inbox message state on turn failure:
@@ -1009,7 +1034,13 @@ export async function runAgentLoop(
         }
       }
 
-      if (consecutiveErrors >= MAX_CONSECUTIVE_ERRORS) {
+      if (budgetUntil) {
+        log(config, `[BUDGET] Daily model budget reached. Sleeping until ${budgetUntil.toISOString()} unless woken.`);
+        db.setAgentState("sleeping");
+        onStateChange?.("sleeping");
+        db.setKV("sleep_until", budgetUntil.toISOString());
+        running = false;
+      } else if (consecutiveErrors >= MAX_CONSECUTIVE_ERRORS) {
         log(
           config,
           `[FATAL] ${MAX_CONSECUTIVE_ERRORS} consecutive errors. Sleeping.`,

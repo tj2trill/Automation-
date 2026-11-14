@@ -656,7 +656,9 @@ function cmdStandings(): void {
           ? `alive, must earn by ${s.mustEarnBy}`
           : "alive";
     console.log(
-      `${s.name.padEnd(18)} gen ${String(s.generation).padStart(2)}  children ${String(s.children).padStart(2)}  earned ${formatUsd(s.earnedMicro).padStart(10)}  spent ${formatUsd(s.spentMicro).padStart(10)}  profit ${formatUsd(s.profitMicro).padStart(10)}  ${status}`,
+      `${s.name.padEnd(18)} gen ${String(s.generation).padStart(2)}  children ${String(s.children).padStart(2)}  earned ${formatUsd(s.earnedMicro).padStart(10)}  spent ${formatUsd(s.spentMicro).padStart(10)}  profit ${formatUsd(s.profitMicro).padStart(10)}  ` +
+        (s.alive ? `24h ${String(s.day.calls).padStart(4)} calls ${formatUsd(s.day.inferenceMicro)}${s.day.limitMicro ? ` of ${formatUsd(s.day.limitMicro)}` : ""}  ` : "") +
+        status,
     );
   }
   store.close();

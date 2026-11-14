@@ -91,6 +91,14 @@ export interface HostConfig {
    * when it is created, so a change applies to agents launched afterwards.
    */
   idleNap: { firstMinutes: number; maxHours: number };
+  /**
+   * Most an agent may spend on paid models in any 24 hours: this many dollars
+   * plus whatever earned profit it holds. Bounds what a model stuck in a loop
+   * can burn before you notice; an agent that earns gets more room. When it is
+   * reached the agent uses a free local model if you have one, otherwise it
+   * waits until spending from more than 24 hours ago drops out. 0 turns it off.
+   */
+  dailyInferenceUsd: number;
   selection: SelectionConfig;
   stripe: StripeConfig;
   /** Longest a job's check may run against one submission. */
@@ -242,6 +250,7 @@ export const DEFAULT_HOST_CONFIG: HostConfig = {
   maxSandboxCpus: 2,
   sandboxPidsLimit: 512,
   idleNap: { firstMinutes: 15, maxHours: 6 },
+  dailyInferenceUsd: 2,
   selection: { spawnProfitUsd: 1, deathGraceMinutes: 60, mustEarnAfterDays: 14 },
   stripe: {
     apiBase: "https://api.stripe.com",
@@ -379,6 +388,9 @@ export function validateHostConfig(config: HostConfig): void {
   }
   if (!(typeof sel.mustEarnAfterDays === "number" && sel.mustEarnAfterDays >= 0 && sel.mustEarnAfterDays <= 365)) {
     throw new Error("host.json: selection.mustEarnAfterDays must be a number from 0 (off) to 365");
+  }
+  if (!(typeof config.dailyInferenceUsd === "number" && config.dailyInferenceUsd >= 0)) {
+    throw new Error("host.json: dailyInferenceUsd must be a non-negative number (0 turns the limit off)");
   }
   const nap = config.idleNap;
   if (!nap || !(nap.firstMinutes >= 1 && nap.firstMinutes <= 1440) || !(nap.maxHours * 60 >= nap.firstMinutes && nap.maxHours <= 168)) {

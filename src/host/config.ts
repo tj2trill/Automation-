@@ -84,6 +84,13 @@ export interface HostConfig {
   maxSandboxMemoryMb: number;
   maxSandboxCpus: number;
   sandboxPidsLimit: number;
+  /**
+   * How long an agent naps when a turn ends with nothing to do: firstMinutes,
+   * doubling with each idle wake-up in a row, up to maxHours. Events (sales,
+   * orders, replies, jobs, messages) wake it regardless. Read by a container
+   * when it is created, so a change applies to agents launched afterwards.
+   */
+  idleNap: { firstMinutes: number; maxHours: number };
   selection: SelectionConfig;
   stripe: StripeConfig;
   /** Longest a job's check may run against one submission. */
@@ -234,6 +241,7 @@ export const DEFAULT_HOST_CONFIG: HostConfig = {
   maxSandboxMemoryMb: 2048,
   maxSandboxCpus: 2,
   sandboxPidsLimit: 512,
+  idleNap: { firstMinutes: 15, maxHours: 6 },
   selection: { spawnProfitUsd: 1, deathGraceMinutes: 60, mustEarnAfterDays: 14 },
   stripe: {
     apiBase: "https://api.stripe.com",
@@ -325,6 +333,7 @@ export function loadHostConfig(): HostConfig {
     ...DEFAULT_HOST_CONFIG,
     ...raw,
     selection: { ...DEFAULT_HOST_CONFIG.selection, ...(raw.selection || {}) },
+    idleNap: { ...DEFAULT_HOST_CONFIG.idleNap, ...(raw.idleNap || {}) },
     stripe: { ...DEFAULT_HOST_CONFIG.stripe, ...(raw.stripe || {}) },
     storefront: { ...DEFAULT_HOST_CONFIG.storefront, ...(raw.storefront || {}) },
     printful: { ...DEFAULT_HOST_CONFIG.printful, ...(raw.printful || {}) },
@@ -370,6 +379,10 @@ export function validateHostConfig(config: HostConfig): void {
   }
   if (!(typeof sel.mustEarnAfterDays === "number" && sel.mustEarnAfterDays >= 0 && sel.mustEarnAfterDays <= 365)) {
     throw new Error("host.json: selection.mustEarnAfterDays must be a number from 0 (off) to 365");
+  }
+  const nap = config.idleNap;
+  if (!nap || !(nap.firstMinutes >= 1 && nap.firstMinutes <= 1440) || !(nap.maxHours * 60 >= nap.firstMinutes && nap.maxHours <= 168)) {
+    throw new Error("host.json: idleNap.firstMinutes must be 1 to 1440, and idleNap.maxHours at least that long and at most 168");
   }
   const st = config.stripe;
   if (!st || !(st.feePercent >= 0 && st.feePercent < 100) || !(st.feeFixedCents >= 0) || !(st.minAmountCents >= 50) || !(st.maxAmountCents >= st.minAmountCents)) {

@@ -110,7 +110,14 @@ const MUTATING_TOOL_NAMES = new Set([
 export function nextIdleNapMs(db: Pick<AutomatonDatabase, "getKV" | "setKV">): number {
   const streak = Math.max(0, Number(db.getKV(IDLE_NAP_KEY)) || 0);
   db.setKV(IDLE_NAP_KEY, String(streak + 1));
-  return Math.min(IDLE_NAP_FIRST_MS * 2 ** Math.min(streak, 20), IDLE_NAP_MAX_MS);
+  // The host sets these on the container from host.json (idleNap).
+  const envNum = (name: string, fallback: number, lo: number, hi: number) => {
+    const v = Number(process.env[name]);
+    return Number.isFinite(v) && v >= lo && v <= hi ? v : fallback;
+  };
+  const first = envNum("AUTOMATON_IDLE_NAP_FIRST_MIN", IDLE_NAP_FIRST_MS / 60_000, 1, 1440) * 60_000;
+  const max = Math.max(first, envNum("AUTOMATON_IDLE_NAP_MAX_HOURS", IDLE_NAP_MAX_MS / 3_600_000, 0.02, 168) * 3_600_000);
+  return Math.min(first * 2 ** Math.min(streak, 20), max);
 }
 
 // Bookkeeping an agent can do on every wake-up without producing anything.

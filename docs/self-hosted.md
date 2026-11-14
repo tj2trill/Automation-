@@ -177,7 +177,9 @@ when they are waiting, and the runtime reminds an agent that keeps waking
 only to go back to sleep. When a turn ends with nothing left to do, the
 runtime naps for 15 minutes, then 30, 60 and so on up to 6 hours for each
 idle wake-up in a row; real work (sending, publishing, delivering, running
-commands) brings it back to 15 minutes.
+commands) brings it back to 15 minutes. Change both ends with
+`"idleNap": { "firstMinutes": 15, "maxHours": 6 }` in host.json; it applies
+to agents launched after the change.
 
 ### How an agent reproduces
 

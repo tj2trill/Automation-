@@ -164,6 +164,23 @@ describe("Agent Loop", () => {
     expect(napMinutes()).toBe(15);
   });
 
+  it("takes its idle nap lengths from the host's settings", async () => {
+    process.env.AUTOMATON_IDLE_NAP_FIRST_MIN = "60";
+    process.env.AUTOMATON_IDLE_NAP_MAX_HOURS = "2";
+    try {
+      const naps: number[] = [];
+      for (let i = 0; i < 3; i++) {
+        db.deleteKV("sleep_until");
+        await runAgentLoop({ identity, config, db, conway, inference: new MockInferenceClient([noToolResponse("Waiting.")]) });
+        naps.push(Math.round((Date.parse(db.getKV("sleep_until")!) - Date.now()) / 60_000));
+      }
+      expect(naps).toEqual([60, 120, 120]);
+    } finally {
+      delete process.env.AUTOMATON_IDLE_NAP_FIRST_MIN;
+      delete process.env.AUTOMATON_IDLE_NAP_MAX_HOURS;
+    }
+  });
+
   it("sleep tool transitions state", async () => {
     const inference = new MockInferenceClient([
       toolCallResponse([

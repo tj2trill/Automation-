@@ -177,6 +177,8 @@ export async function createSandbox(
     pidsLimit: config.sandboxPidsLimit,
     env: {
       AUTOMATON_HOST_URL: deps.containerHostUrl,
+      AUTOMATON_IDLE_NAP_FIRST_MIN: String(config.idleNap?.firstMinutes ?? 15),
+      AUTOMATON_IDLE_NAP_MAX_HOURS: String(config.idleNap?.maxHours ?? 6),
       // The runtime execs locally inside its own container, so it is not
       // given a sandbox id to route through the API.
     },

@@ -73,7 +73,11 @@ export async function runSelftest(opts: SelftestOptions): Promise<CheckResult[]>
         seen.add(`${m.upstream}:${m.id}`);
         const started = Date.now();
         try {
-          const r = await opts.chat(m as HostModelConfig, [{ role: "user", content: "Reply with the single word: ready" }], { maxTokens: 16 });
+          // Local models are free, and thinking ones (Qwen 3.x, Gemma 4) reason
+          // for ~100+ tokens before the reply; 16 would cut them off with empty
+          // content. Paid models stay at 16 so the check costs next to nothing.
+          const maxTokens = m.upstream === "ollama" ? 1024 : 16;
+          const r = await opts.chat(m as HostModelConfig, [{ role: "user", content: "Reply with the single word: ready" }], { maxTokens });
           const text = typeof r.message?.content === "string" ? r.message.content.trim() : "";
           const cost = costMicro(m as HostModelConfig, r.usage?.promptTokens ?? 0, r.usage?.completionTokens ?? 0);
           add({

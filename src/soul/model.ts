@@ -15,7 +15,6 @@ const logger = createLogger("soul");
 
 // ─── Constants ──────────────────────────────────────────────────
 
-const SOUL_FORMAT = "soul/v1" as const;
 
 // ─── Hash Utility ───────────────────────────────────────────────
 

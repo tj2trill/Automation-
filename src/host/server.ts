@@ -14,6 +14,7 @@
  */
 
 import http from "http";
+import { randomBytes } from "crypto";
 import { ulid } from "ulid";
 import { keccak256, toBytes, verifyMessage } from "viem";
 import type { HostConfig } from "./config.js";
@@ -553,7 +554,12 @@ route("POST", /^\/v1\/sandboxes\/([^/]+)\/files\/upload\/json$/, async (ctx, [id
   if (typeof filePath !== "string" || !filePath || typeof content !== "string") {
     throw new HttpError(400, "path and content are required", "invalid_request");
   }
-  await ctx.deps.driver.writeFile(sb.containerName, filePath, content);
+  try {
+    await ctx.deps.driver.writeFile(sb.containerName, filePath, content);
+  } catch (err: any) {
+    // The message is the agent's own container refusing the write; it needs it to fix the path.
+    throw new HttpError(500, err?.message || "write failed", "error");
+  }
   return { body: { ok: true, path: filePath } };
 });
 
@@ -1025,8 +1031,12 @@ export function createRequestHandler(deps: HostServerDeps): http.RequestListener
         send(403, { error: err.message, code: "account_dead" });
         return;
       }
-      deps.log?.(`unhandled error: ${err instanceof Error ? err.stack || err.message : String(err)}`);
-      send(500, { error: err instanceof Error ? err.message : "internal error", code: "internal" });
+      // The text of an unexpected error is the host's own (Docker output, file
+      // paths, SQL). The caller is an agent, so it gets a reference instead;
+      // the same reference is in the host log next to the full error.
+      const ref = randomBytes(4).toString("hex");
+      deps.log?.(`unhandled error [ref ${ref}]: ${err instanceof Error ? err.stack || err.message : String(err)}`);
+      send(500, { error: `Internal error on the host (ref ${ref}). The creator can find the details in the host log.`, code: "internal", ref });
     }
   };
 }

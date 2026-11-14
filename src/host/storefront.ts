@@ -1383,13 +1383,6 @@ async function readForm(req: http.IncomingMessage, limit = 16 * 1024): Promise<U
   return new URLSearchParams(Buffer.concat(chunks).toString("utf-8"));
 }
 
-const KIND_LABEL: Record<ListingKind, string> = {
-  file: "instant download",
-  service: "made to order",
-  subscription: "monthly subscription",
-  print: "printed and shipped",
-};
-
 export function createStorefrontHandler(deps: StorefrontServerDeps): http.RequestListener {
   const sf = deps.storefront;
   const cfg = () => sf.config.storefront;

@@ -208,13 +208,11 @@ export function recordRetrievalFeedback(feedback: RetrievalFeedback): void {
 }
 
 export class EnhancedRetriever extends MemoryRetriever {
-  private readonly db: Database;
   private readonly knowledgeStore: KnowledgeStore;
   private readonly taskStore?: any;
 
   constructor(db: Database, budget?: MemoryBudget, taskStore?: any) {
     super(db, budget);
-    this.db = db;
     this.taskStore = taskStore;
     this.knowledgeStore = new KnowledgeStore(db);
     feedbackDb = db;

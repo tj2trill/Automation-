@@ -14,6 +14,7 @@ import {
   type PrivateKeyAccount,
 } from "viem";
 import { base, baseSepolia } from "viem/chains";
+import bs58 from "bs58";
 import { ResilientHttpClient } from "./http-client.js";
 import type { ChainType } from "../identity/chain.js";
 
@@ -206,35 +207,44 @@ export async function getUsdcBalance(
 }
 
 /**
- * Get the USDC balance on Solana using @solana/web3.js.
+ * Get the USDC balance on Solana with one JSON-RPC call
+ * (getTokenAccountsByOwner). No Solana SDK is needed for a read.
  */
 async function getSolanaUsdcBalance(address: string): Promise<number> {
   try {
-    const { Connection, PublicKey } = await import("@solana/web3.js");
-    const rpcUrl = process.env.SOLANA_RPC_URL || "https://api.mainnet-beta.solana.com";
-    const connection = new Connection(rpcUrl, "confirmed");
-    const ownerPubkey = new PublicKey(address);
-    const mintPubkey = new PublicKey(SOLANA_USDC_MINT);
-
-    // Find associated token account for USDC
-    const tokenAccounts = await connection.getParsedTokenAccountsByOwner(
-      ownerPubkey,
-      { mint: mintPubkey },
-    );
-
-    if (tokenAccounts.value.length === 0) {
-      return 0;
+    // A Solana address is a 32-byte key in base58. Check before it goes on the wire.
+    let keyBytes = 0;
+    try {
+      keyBytes = bs58.decode(address).length;
+    } catch {
+      keyBytes = 0;
     }
+    if (keyBytes !== 32) throw new Error("not a valid Solana address");
+
+    const rpcUrl = process.env.SOLANA_RPC_URL || "https://api.mainnet-beta.solana.com";
+    const res = await fetch(rpcUrl, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        jsonrpc: "2.0",
+        id: 1,
+        method: "getTokenAccountsByOwner",
+        params: [address, { mint: SOLANA_USDC_MINT }, { encoding: "jsonParsed", commitment: "confirmed" }],
+      }),
+      signal: AbortSignal.timeout(15_000),
+    });
+    if (!res.ok) throw new Error(`RPC answered HTTP ${res.status}`);
+    const reply = (await res.json()) as { result?: { value?: unknown }; error?: { message?: string } };
+    if (reply.error) throw new Error(reply.error.message || "RPC error");
+    const accounts = reply.result?.value;
+    if (!Array.isArray(accounts)) throw new Error("RPC reply has no account list");
 
     // Sum all USDC token accounts (usually just one)
     let totalBalance = 0;
-    for (const account of tokenAccounts.value) {
-      const parsed = account.account.data.parsed;
-      if (parsed?.info?.tokenAmount?.uiAmount != null) {
-        totalBalance += parsed.info.tokenAmount.uiAmount;
-      }
+    for (const account of accounts) {
+      const uiAmount = account?.account?.data?.parsed?.info?.tokenAmount?.uiAmount;
+      if (typeof uiAmount === "number") totalBalance += uiAmount;
     }
-
     return totalBalance;
   } catch (err: any) {
     throw new Error(`Solana USDC balance check failed: ${err?.message || String(err)}`);

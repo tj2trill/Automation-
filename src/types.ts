@@ -766,7 +766,7 @@ export const DEFAULT_TREASURY_POLICY: TreasuryPolicy = {
   maxSingleTransferCents: 5000,
   maxHourlyTransferCents: 10000,
   maxDailyTransferCents: 25000,
-  minimumReserveCents: 1000,
+  minimumReserveCents: 100,
   maxX402PaymentCents: 100,
   x402AllowedDomains: ['conway.tech'],
   transferCooldownMs: 0,

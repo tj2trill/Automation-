@@ -7,7 +7,7 @@
  * - transfer_max_single denies transfers > 5000 cents
  * - transfer_hourly_cap denies when hourly total > 10000
  * - transfer_daily_cap denies when daily total > 25000
- * - minimum_reserve denies when balance would drop below 1000
+ * - minimum reserve: enforced in the transfer tools, see minimum-reserve.test.ts
  * - turn_transfer_limit denies > 2 transfers per turn
  * - Iterative drain scenario: 10 successive transfers blocked by hourly cap
  */
@@ -506,8 +506,8 @@ describe("Financial Policy Rules", () => {
   });
 
   describe("Rules are registered", () => {
-    it("creates 9 financial rules (7 Phase 0 + 2 Phase 1)", () => {
-      expect(rules.length).toBe(9);
+    it("creates 8 financial rules (the minimum reserve is enforced in the transfer tools)", () => {
+      expect(rules.length).toBe(8);
     });
 
     it("all rules have priority 500", () => {

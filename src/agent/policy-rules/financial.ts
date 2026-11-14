@@ -11,6 +11,7 @@ import type {
   PolicyRuleResult,
   TreasuryPolicy,
 } from "../../types.js";
+import { DEFAULT_TREASURY_POLICY } from "../../types.js";
 
 function deny(
   rule: string,
@@ -176,36 +177,22 @@ function createTransferDailyCapRule(policy: TreasuryPolicy): PolicyRule {
 }
 
 /**
- * Deny any financial operation that would bring balance below minimum reserve.
+ * The minimum reserve: a transfer may never leave the agent with less than
+ * `minimumReserveCents`. Returns the refusal text, or null if the transfer is
+ * fine. The balance is only known once the tool has asked the control plane
+ * for it, so transfer_credits and fund_child call this at that point; a
+ * policy rule runs before the tool and cannot see the balance.
  */
-function createMinimumReserveRule(policy: TreasuryPolicy): PolicyRule {
-  return {
-    id: "financial.minimum_reserve",
-    description: `Deny if balance would drop below ${policy.minimumReserveCents} cents reserve`,
-    priority: 500,
-    appliesTo: {
-      by: "name",
-      names: ["transfer_credits", "x402_fetch", "fund_child"],
-    },
-    evaluate(request: PolicyRequest): PolicyRuleResult | null {
-      // For transfer_credits and fund_child, we can check from args
-      const amount = request.args.amount_cents as number | undefined;
-      if (amount === undefined) return null;
-
-      // We need the current balance from context
-      // The balance check is done inside the tool execute function,
-      // but we can check spend tracker totals as an additional guard
-      const spendTracker = request.turnContext.sessionSpend;
-      const hourlySpend = spendTracker.getHourlySpend("transfer");
-      const dailySpend = spendTracker.getDailySpend("transfer");
-
-      // This rule is a declaration — actual balance checking
-      // requires the async getCreditsBalance call which happens
-      // inside the tool execution. The tool itself has a guard
-      // (cannot transfer more than half balance).
-      return null;
-    },
-  };
+export function reserveShortfall(
+  balanceCents: number,
+  amountCents: number,
+  policy: TreasuryPolicy | undefined,
+): string | null {
+  const reserve = policy?.minimumReserveCents ?? DEFAULT_TREASURY_POLICY.minimumReserveCents;
+  const left = balanceCents - amountCents;
+  if (left >= reserve) return null;
+  const usd = (cents: number) => `$${(cents / 100).toFixed(2)}`;
+  return `Blocked: this would leave ${usd(left)}, below your minimum reserve of ${usd(reserve)}. Self-preservation.`;
 }
 
 /**
@@ -306,7 +293,6 @@ export function createFinancialRules(
     createTransferMaxSingleRule(treasuryPolicy),
     createTransferHourlyCapRule(treasuryPolicy),
     createTransferDailyCapRule(treasuryPolicy),
-    createMinimumReserveRule(treasuryPolicy),
     createTurnTransferLimitRule(treasuryPolicy),
     createInferenceDailyCapRule(treasuryPolicy),
     createRequireConfirmationRule(treasuryPolicy),

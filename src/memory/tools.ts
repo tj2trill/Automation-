@@ -190,7 +190,7 @@ export function noteAboutAgent(
 ): string {
   try {
     const rel = new RelationshipMemoryManager(db);
-    const id = rel.record({
+    rel.record({
       entityAddress: args.entityAddress,
       entityName: args.entityName ?? null,
       relationshipType: args.relationshipType,

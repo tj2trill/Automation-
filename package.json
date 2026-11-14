@@ -51,7 +51,6 @@
     "host": "node dist/host/cli.js"
   },
   "dependencies": {
-    "@solana/web3.js": "^1.98.0",
     "@types/better-sqlite3": "^7.6.0",
     "better-sqlite3": "^11.0.0",
     "bs58": "^6.0.0",
@@ -76,7 +75,7 @@
     "smtp-server": "^3.21.4",
     "tsx": "^4.23.15",
     "typescript": "^5.9.3",
-    "vite": "^7.3.8",
+    "vite": "^8.3.8",
     "vitest": "^4.1.12"
   },
   "engines": {

@@ -110,7 +110,6 @@ export async function spawnChild(
   }
 
   const childId = ulid();
-  let sandboxId: string | undefined;
   let reusedSandbox: { id: string } | null = null;
 
   // If no lifecycle provided, use legacy path
@@ -143,7 +142,6 @@ export async function spawnChild(
         diskGb: tier.diskGb,
       });
     }
-    sandboxId = sandbox.id;
 
     // Create a scoped client so all exec/writeFile calls target the CHILD sandbox
     const childConway = conway.createScopedClient(sandbox.id);
@@ -275,7 +273,6 @@ async function spawnChildLegacy(
   genesis: GenesisConfig,
   childId: string,
 ): Promise<ChildAutomaton> {
-  let sandboxId: string | undefined;
 
   // Get child sandbox memory from config (default 1024MB)
   const childMemoryMb = (db as any).config?.childSandboxMemoryMb ?? 1024;
@@ -289,7 +286,6 @@ async function spawnChildLegacy(
       memoryMb: legacyTier.memoryMb,
       diskGb: legacyTier.diskGb,
     });
-    sandboxId = sandbox.id;
 
     // Create a scoped client so all exec/writeFile calls target the CHILD sandbox
     const childConway = conway.createScopedClient(sandbox.id);

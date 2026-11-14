@@ -161,12 +161,6 @@ function dim(v: string | number | boolean | undefined): string {
   return chalk.dim(String(v));
 }
 
-function val(v: string | number | boolean | undefined): string {
-  if (v === undefined || v === null || v === "") return chalk.dim("(not set)");
-  if (typeof v === "boolean") return v ? chalk.green("yes") : chalk.red("no");
-  return chalk.white(String(v));
-}
-
 // ─── Main menu ────────────────────────────────────────────────────
 
 function printMainMenu(config: AutomatonConfig): void {
